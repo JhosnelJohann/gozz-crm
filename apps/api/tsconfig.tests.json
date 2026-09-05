@@ -1,0 +1,19 @@
+// Typecheck de la SUITE, aparte del tsconfig de producción.
+//
+// POR QUÉ UN FICHERO APARTE, Y NO AÑADIR `tests/` AL `tsconfig.json`:
+// el tsconfig de producción hace `include: ["src/**/*"]` con `rootDir: "src"` y `outDir: "dist"`.
+// Meter `tests/` ahí los COMPILARÍA AL BUILD —irían a `dist/` y viajarían al servidor— y además
+// rompería `rootDir`. La regla del proyecto es la misma que ya rige para `apps/api/scripts/`: lo
+// que no es runtime no entra al build. Así el tsconfig de producción no se toca para que pasen las
+// pruebas, que es justo lo que el encargo prohibía.
+//
+// Hereda del de producción y solo cambia el alcance y lo necesario para tipar vitest.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["tests/**/*", "vitest.config.ts", "src/**/*"]
+}

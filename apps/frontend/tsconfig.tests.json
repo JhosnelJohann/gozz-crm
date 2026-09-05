@@ -1,0 +1,26 @@
+// Typecheck de la SUITE del frontend, aparte del tsconfig de producción.
+//
+// 🔴 POR QUÉ UN FICHERO APARTE — Y AQUÍ EL MOTIVO NO ES EL MISMO QUE EN `apps/api`:
+// allí el problema era que `tests/` acabaría compilado en `dist/` y viajaría al servidor. Aquí no
+// hay `dist/`: el problema es el BUILD.
+//
+// `apps/frontend/tsconfig.json` hace `include: ["**/*.ts", "**/*.tsx"]` —todo el paquete, no solo
+// `src/`—, así que un directorio `tests/` nuevo entraría solo en el typecheck de producción. Y
+// `next.config.mjs` desactiva ESLint durante el build (`eslint.ignoreDuringBuilds: true`) pero
+// **NO desactiva los errores de TypeScript**: no hay `typescript.ignoreBuildErrors`. Resultado: un
+// error de tipos en un TEST tumbaría `next build`, y con él el despliegue.
+//
+// Por eso el tsconfig de producción excluye `tests/` y el typecheck de la suite vive aquí. Ni una
+// prueba puede romper un deploy, ni hay que relajar el tsconfig de producción para que la suite
+// compile — que es justo lo que convierte una red de seguridad en un estorbo que alguien acaba
+// quitando.
+//
+// Hereda del de producción: mismos `strict`, mismos `paths`. Solo cambia el alcance.
+{
+  "extends": "./tsconfig.json",
+  // 🔴 `exclude` SE HEREDA, y el del padre lleva "tests". Sin volver a declararlo aqui, este
+  // fichero excluiria justo lo que viene a comprobar: `include` no gana sobre un `exclude`
+  // heredado. Se detecto porque un error de tipos metido a proposito en un test daba EXIT 0.
+  "exclude": ["node_modules"],
+  "include": ["tests/**/*", "vitest.config.ts", "src/**/*"]
+}

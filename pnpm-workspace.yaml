@@ -1,0 +1,19 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+allowBuilds:
+  # pnpm 11 dejó estas dos entradas con el texto "set this to true or false" sin rellenar, y
+  # mientras estén sin decidir TODO `pnpm install` termina con código 1
+  # (ERR_PNPM_IGNORED_BUILDS), lo que a su vez rompe cualquier `pnpm --filter <app> <script>`.
+  # Se responden con `true`, que es lo que `onlyBuiltDependencies` (abajo) ya venía declarando:
+  # esbuild necesita su script para dejar listo el binario nativo, y unrs-resolver igual.
+  esbuild: true
+  unrs-resolver: true
+  # sharp trae binarios nativos por plataforma. 🔴 SIN ESTA ENTRADA pnpm lo instala pero NO
+  # ejecuta su script, el DESPLIEGUE SALE VERDE y la API falla en la PRIMERA peticion a /thumb.
+  # Tiene que estar en las DOS listas de este fichero, no en una.
+  sharp: true
+onlyBuiltDependencies:
+  - esbuild
+  - unrs-resolver
+  - sharp

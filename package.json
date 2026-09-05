@@ -1,0 +1,24 @@
+{
+  "name": "gozz-crm",
+  "private": true,
+  "version": "0.1.0",
+  "description": "GOZZ CRM — plataforma CRM AI-first, inmigracion como vertical inicial",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r --if-present --reporter=append-only lint",
+    "lint:fix": "pnpm -r --if-present --reporter=append-only lint:fix",
+    "migrate": "node scripts/run-migrations.mjs",
+    "migrate:status": "node scripts/run-migrations.mjs status",
+    "migrate:baseline": "node scripts/run-migrations.mjs baseline",
+    "seed:super-admin": "node scripts/seed-super-admin.mjs",
+    "setup:local-dirs": "node scripts/ensure-local-dirs.mjs",
+    "postinstall": "node scripts/ensure-local-dirs.mjs"
+  },
+  "engines": { "node": ">=20", "pnpm": ">=9" },
+  "dependencies": {
+    "pg": "^8.13.1",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.7"
+  }
+}

@@ -1,0 +1,38 @@
+node_modules
+.next
+.turbo
+dist
+build
+# Caché incremental de TypeScript (se regenera en cada build; no versionar)
+*.tsbuildinfo
+.env
+.env.local
+*.log
+logs/
+data/
+.DS_Store
+__pycache__
+*.pyc
+apps/ai/venv
+
+# backups ad-hoc (reemplazados por git)
+*.bak
+*.bak-*
+*.tar.gz
+.env.*
+# ...pero SI versionar las plantillas de ejemplo (sin secretos)
+!.env.example
+!.env.*.example
+vendor/whisper.cpp
+
+# === bak numerados + tarballs (Jhosnel) ===
+*.bak[0-9]*
+*.bak.*
+*.tgz
+_bak-*
+
+# Reportes generados por los scripts de reorganización de /uploads (no versionar)
+reorg-report/
+
+# Datos de sesión de herramientas de IA (no van al repo)
+.claude/

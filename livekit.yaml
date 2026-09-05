@@ -1,0 +1,26 @@
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+rtc:
+  tcp_port: 8080
+  port_range_start: 50000
+  port_range_end: 50100
+  node_ip: <YOUR_SERVER_PUBLIC_IP>
+  turn_servers:
+    - host: <YOUR_TURN_DOMAIN>
+      port: 3478
+      protocol: udp
+      username: gozz
+      credential: <YOUR_TURN_SHARED_SECRET>
+    - host: <YOUR_TURN_DOMAIN>
+      port: 3478
+      protocol: tcp
+      username: gozz
+      credential: <YOUR_TURN_SHARED_SECRET>
+keys:
+  <YOUR_LIVEKIT_API_KEY>: <YOUR_LIVEKIT_API_SECRET>
+log_level: info
+room:
+  auto_create: true
+  empty_timeout: 300
+  max_participants: 20
