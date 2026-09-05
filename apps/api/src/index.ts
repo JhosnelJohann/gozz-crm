@@ -160,8 +160,8 @@ async function startEmailNotifyListener() {
 
 initSocket(httpServer);
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`[crm-api] listening on :${PORT} (cookie_secure=${COOKIE_SECURE}, socket.io enabled)`);
-  if (process.env.EMAIL_SYNC_IN_API === "1") startEmailSyncLoop(); // email-sync corre en proceso worker separado (crm-email-worker); ver email-worker.ts
+  console.log(`[gozz-api] listening on :${PORT} (cookie_secure=${COOKIE_SECURE}, socket.io enabled)`);
+  if (process.env.EMAIL_SYNC_IN_API === "1") startEmailSyncLoop(); // email-sync corre en proceso worker separado (gozz-email-worker); ver email-worker.ts
   startEmailNotifyListener().catch(() => {}); // puente NOTIFY→socket para correo en tiempo real
   startBreakMonitor();
   startRecognitionsCron();

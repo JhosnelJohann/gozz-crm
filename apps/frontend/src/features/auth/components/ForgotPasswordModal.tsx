@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Mail, Lock, Eye, EyeOff, ArrowLeft, KeyRound, ShieldCheck, Check, X } from "@/lib/bootstrap-icons";
 import { toast } from "sonner";
-import { useAuth, ApiError } from "../hooks/useAuth.js";
+import { useAuth, ApiError } from "../hooks/useAuth";
 
 // =====================================================================
 // Modal: Olvidé mi contraseña (flujo 2 pasos + OTP + password strength)

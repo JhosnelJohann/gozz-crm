@@ -4,9 +4,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Mail, Lock, Eye, EyeOff } from "@/lib/bootstrap-icons";
 import { toast } from "sonner";
 import { ShimmerButton } from "@/components/magic/ShimmerButton";
-import { useAuth, ApiError } from "../hooks/useAuth.js";
-import { useAuthUiStore } from "../store.js";
-import { ForgotPasswordModal } from "./ForgotPasswordModal.js";
+import { useAuth, ApiError } from "../hooks/useAuth";
+import { useAuthUiStore } from "../store";
+import { ForgotPasswordModal } from "./ForgotPasswordModal";
 
 export function LoginForm() {
   const [email, setEmail] = useState("");

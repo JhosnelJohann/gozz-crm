@@ -2,7 +2,7 @@
 import { useState } from "react";
 import type { ContactoDetalle, ContactoInput, ContactoListItem } from "@gozz/shared-types";
 import { apiGet, apiPatch, apiPost } from "@/lib/api-client";
-import { useContactosStore, type ContactosFiltros } from "../store.js";
+import { useContactosStore, type ContactosFiltros } from "../store";
 
 export interface ContactosListResponse {
   items: ContactoListItem[];
