@@ -227,6 +227,7 @@ export const VolumeX = wrap(P.SpeakerSlash);
 export const Wand2 = wrap(P.MagicWand);
 export const Webhook = wrap(P.Plug);
 export const WifiOff = wrap(P.WifiSlash);
+export const WhatsappLogo = wrap(P.WhatsappLogo);
 export const Wine = wrap(P.Wine);
 export const X = wrap(P.X);
 export const XCircle = wrap(P.XCircle);

@@ -29,7 +29,8 @@ export type StorageModulo =
   | "oportunidad_ia"
   | "tarea"
   | "chat_mensaje"
-  | "chat_grupo_avatar";
+  | "chat_grupo_avatar"
+  | "whatsapp_mensaje";
 
 export interface StorageIds {
   userId?: string;
@@ -40,6 +41,7 @@ export interface StorageIds {
   solId?: string;
   tareaId?: string;
   grupoId?: string;
+  conversacionId?: string;
 }
 
 export interface StoragePath {
@@ -128,6 +130,11 @@ export function storagePathFor(modulo: StorageModulo, ids: StorageIds): StorageP
     case "chat_grupo_avatar": {
       const grupoId = req(ids, "grupoId", modulo);
       dirRel = `chats/grupos/${grupoId}`;
+      break;
+    }
+    case "whatsapp_mensaje": {
+      const conversacionId = req(ids, "conversacionId", modulo);
+      dirRel = `whatsapp/mensajes/${shard(conversacionId)}/${conversacionId}`;
       break;
     }
     default: {

@@ -37,6 +37,19 @@ module.exports = {
       out_file: "/root/gozz-crm/logs/email-worker-out.log"
     },
     {
+      // WhatsApp (Baileys) aislado: un corte/reconexión de WhatsApp NO puede tumbar gozz-api. Ver apps/api/src/whatsapp-worker.ts
+      name: "gozz-whatsapp-worker",
+      cwd: "/root/gozz-crm/apps/api",
+      script: "/root/gozz-crm/apps/api/dist/whatsapp-worker.js",
+      interpreter: "node",
+      env: { NODE_ENV: "production" },
+      max_memory_restart: "400M",
+      min_uptime: "15s",
+      max_restarts: 10,
+      error_file: "/root/gozz-crm/logs/whatsapp-worker-err.log",
+      out_file: "/root/gozz-crm/logs/whatsapp-worker-out.log"
+    },
+    {
       name: "gozz-ai",
       cwd: "/root/gozz-crm/apps/ai",
       script: "/root/gozz-crm/apps/ai/venv/bin/uvicorn",

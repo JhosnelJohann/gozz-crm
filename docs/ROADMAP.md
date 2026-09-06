@@ -269,3 +269,52 @@ arquitectura limpia — buen momento para rediseñarlos visualmente también), l
   páginas legacy.
 - Los modales del módulo de Correo (composer, conectar buzón, ACL, etc.) no se tocaron — heredan
   `AnimatedModal`/`.modal-surface` sin cambios.
+
+## 8. Bandeja compartida de WhatsApp (estilo Whaticket) — 2026-09
+
+Módulo nuevo, independiente del chat interno de equipo: conecta un número de WhatsApp por QR
+(Baileys) y permite a todo el equipo ver y responder la conversación con un lead/cliente desde
+dentro del CRM, clasificándola por un embudo propio y por tags con color.
+
+**Por qué embudo propio y no `gozz.pipeline_stages`**: esa tabla ya es un híbrido (`key` único vs.
+FK por `id` en `stage_automations`) y ninguna de sus consultas filtra por tipo — meter ahí las
+etapas de WhatsApp habría exigido parchear cada join o arriesgarse a que una etapa de WhatsApp
+apareciera en un dropdown de Oportunidades. `gozz.whatsapp_pipeline_stages` es una tabla dedicada,
+mismo patrón que ya usa este código para separar `oportunidad_monto_solicitudes` de
+`oportunidad_pago_solicitudes` en vez de una mega-tabla con discriminador.
+
+**Modelo de datos** (`packages/db/migrations/0005_whatsapp_inbox_schema.sql` +
+`0006_..._seed_pipeline_stages.sql`): `whatsapp_conexiones` (+ `whatsapp_conexion_acl`, calco de
+`buzon_acl`), `whatsapp_pipeline_stages` (6 etapas seed: apertura → activa → oferta → decisión →
+ganado/perdido), `whatsapp_tags` + `whatsapp_conversacion_tags`, `whatsapp_conversaciones`
+(`contacto_id` nullable — vinculación automática por teléfono contra `contactos_cache`, o manual
+desde la UI), `whatsapp_mensajes` (idempotente por `wa_message_id`, único índice parcial).
+
+**Arquitectura de proceso**: igual razonamiento que `email-worker.ts` — Baileys corre en su propio
+proceso PM2 (`gozz-whatsapp-worker`, `apps/api/src/whatsapp-worker.ts`) para que un corte de
+WhatsApp no pueda tumbar `gozz-api`. La sesión de Baileys se persiste cifrada (AES-256-GCM, mismo
+helper que `buzones_email`) en `whatsapp_conexiones.session_state_enc` vía un adaptador de
+`AuthenticationState` respaldado en Postgres (`providers/postgres-auth-state.ts`) — así el proceso
+sobrevive un reinicio/redeploy sin pedir un QR nuevo. El puente en tiempo real reutiliza el mismo
+mecanismo `pg_notify`/`LISTEN`→Socket.IO que ya usa Correo (`whatsapp_evento` en vez de
+`email_nuevo`).
+
+**Costura para Meta Cloud API**: `providers/whatsapp-provider.interface.ts` abstrae
+`connect/disconnect/sendMessage/onQr/onConnectionUpdate/onMessage`; `baileys.provider.ts` es la
+única implementación real hoy, `fake.provider.ts` es el doble usado en `tests/whatsapp.test.ts`
+(nunca se importa Baileys desde ahí). La columna `whatsapp_conexiones.proveedor` ya distingue
+`'baileys' | 'meta_cloud'` para cuando se necesite la API oficial (mensajería masiva NO debe ir
+por Baileys — riesgo de bloqueo del número).
+
+**Frontend** (`app/whatsapp/page.tsx` + `components/whatsapp/*`): calcado del árbol de Correo
+(`ConexionesRail`↔`BuzonesRail`, mismo patrón mobile-first de un panel a la vez con overlay).
+Reutiliza `MessageStatus`/`FileMessage`/`AudioMessage`/`EmojiPicker` del chat interno tal cual —
+son genéricos —, pero NO reutiliza `ChatMessages`/`ChatComposer` (acoplados a `leido_por` como
+array multi-usuario y a menciones entre usuarios internos, que no aplican a una única contraparte
+externa).
+
+**Queda para una entrega posterior** (no construido ahora): varias conexiones con monitoreo de
+salud, vista Kanban por etapa (útil también para Oportunidades — nuevo primitivo `Kanban.tsx`),
+respuestas rápidas/plantillas, chatbot automático, envío de campañas/broadcast (bloqueado a
+propósito por el riesgo de baneo de Baileys — si se hace, debe ir por Meta Cloud API), y el propio
+proveedor de Meta Cloud API.

@@ -30,6 +30,8 @@ import { registerUploadsRoutes } from "./uploads-routes.js";
 import { registerConfiguracionRoutes } from "./configuracion-routes.js";
 import { registerOportunidadesEtapaRoutes } from "./oportunidades-etapa-routes.js";
 import { registerOportunidadesExportacionRoutes } from "./oportunidades-exportacion-routes.js";
+import { registerWhatsAppRoutes } from "./modules/whatsapp/whatsapp.routes.js";
+import { listUsuariosConAcceso as listUsuariosConAccesoWhatsApp } from "./modules/whatsapp/whatsapp.repository.js";
 
 process.on("uncaughtException", (err) => {
   console.error("[uncaughtException]", err instanceof Error ? err.stack || err.message : err);
@@ -114,6 +116,7 @@ registerClockRoutes(app);
 registerRecognitionsRoutes(app);
 registerOportunidadesEtapaRoutes(app);
 registerOportunidadesExportacionRoutes(app);
+registerWhatsAppRoutes(app, upload);
 
 registerErrorHandler(app);
 
@@ -158,11 +161,47 @@ async function startEmailNotifyListener() {
   }
 }
 
+// Puente tiempo real de WhatsApp: el worker (gozz-whatsapp-worker, sin socket) hace NOTIFY
+// 'whatsapp_evento' al recibir un QR, un cambio de estado de conexión, o un mensaje; aquí
+// escuchamos con LISTEN y reenviamos por socket.io a los usuarios con acceso a esa conexión.
+// Mismo patrón que startEmailNotifyListener() de arriba.
+async function startWhatsAppNotifyListener() {
+  try {
+    const client = await pool.connect();
+    client.on("error", (err: any) => {
+      console.error("[whatsapp-notify] client error, reconectando:", err?.message || err);
+      try { client.release(); } catch {}
+      setTimeout(() => { startWhatsAppNotifyListener().catch(() => {}); }, 5000);
+    });
+    client.on("notification", async (msg: any) => {
+      if (msg.channel !== "whatsapp_evento") return;
+      let payload: any = {};
+      try { payload = JSON.parse(msg.payload || "{}"); } catch { return; }
+      try {
+        const userIds = await listUsuariosConAccesoWhatsApp(payload.conexion_id);
+        const event = payload.tipo === "qr" ? "whatsapp:qr"
+          : payload.tipo === "estado" ? "whatsapp:estado"
+          : payload.tipo === "mensaje" ? "whatsapp:mensaje"
+          : "whatsapp:mensaje-estado";
+        for (const uid of userIds) emitToUser(uid, event, payload);
+      } catch (e: any) {
+        console.error("[whatsapp-notify] resolve users error:", e?.message || e);
+      }
+    });
+    await client.query("LISTEN whatsapp_evento");
+    console.log("[whatsapp-notify] LISTEN whatsapp_evento activo");
+  } catch (e: any) {
+    console.error("[whatsapp-notify] no se pudo iniciar, reintentando:", e?.message || e);
+    setTimeout(() => { startWhatsAppNotifyListener().catch(() => {}); }, 5000);
+  }
+}
+
 initSocket(httpServer);
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`[gozz-api] listening on :${PORT} (cookie_secure=${COOKIE_SECURE}, socket.io enabled)`);
   if (process.env.EMAIL_SYNC_IN_API === "1") startEmailSyncLoop(); // email-sync corre en proceso worker separado (gozz-email-worker); ver email-worker.ts
   startEmailNotifyListener().catch(() => {}); // puente NOTIFY→socket para correo en tiempo real
+  startWhatsAppNotifyListener().catch(() => {}); // puente NOTIFY→socket para WhatsApp en tiempo real
   startBreakMonitor();
   startRecognitionsCron();
 });

@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   HouseSimple, Users, Briefcase, CheckSquare, ChatCircle,
   Envelope, GraduationCap, ChartLine, Gear,
-  File, Clock, FolderSimple, AppWindow, Tray, CaretLeft, CaretRight, X
+  File, Clock, FolderSimple, AppWindow, Tray, CaretLeft, CaretRight, X, WhatsappLogo
 } from "@/lib/bootstrap-icons";
 import { cn } from "@/lib/utils";
 import { useChatUnread } from "@/lib/useChatUnread";
@@ -25,6 +25,7 @@ const NAV = [
   { href: "/drive", label: "Drive", icon: FolderSimple },
   { href: "/chat", label: "Chat", icon: ChatCircle },
   { href: "/correo", label: "Correo", icon: Envelope },
+  { href: "/whatsapp", label: "WhatsApp", icon: WhatsappLogo },
   { href: "/academia", label: "Academia", icon: GraduationCap },
   { href: "/reportes", label: "Reportes", icon: ChartLine },
   { href: "/equipo", label: "Equipo", icon: Users },
