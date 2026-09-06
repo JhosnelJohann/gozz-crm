@@ -38,25 +38,23 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "GOZZ CRM",
   description: "GOZZ — CRM AI-first para agencias de inmigración",
-  icons: { icon: "/logo-gozz.png", apple: "/logo-gozz.png" }
+  icons: { icon: ["/logo-gozz.svg", "/logo-gozz.png"], apple: "/logo-gozz.png" }
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es" className={`${inter.variable} ${oswald.variable} ${spaceGrotesk.variable} ${jetbrains.variable}`} suppressHydrationWarning>
       <head>
+        {/* Claro es el default (rediseño 2026); solo se activa oscuro si el usuario lo eligió
+            explícitamente antes (toggle en Topbar). Ya no se decide por hora del día — evita
+            además el flash oscuro→claro que había en horario nocturno, porque ThemeProvider
+            ya defaultaba a claro al hidratar y este script decidía distinto hasta ese momento. */}
         <script dangerouslySetInnerHTML={{ __html: `
           (function() {
             try {
-              var stored = localStorage.getItem('theme');
-              var theme;
-              if (stored === 'dark' || stored === 'light') {
-                theme = stored;
-              } else {
-                var h = new Date().getHours();
-                theme = (h >= 18 || h < 6) ? 'dark' : 'light';
+              if (localStorage.getItem('theme') === 'dark') {
+                document.documentElement.classList.add('dark');
               }
-              if (theme === 'dark') document.documentElement.classList.add('dark');
             } catch(e){}
           })();
         `}} />

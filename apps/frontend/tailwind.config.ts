@@ -8,6 +8,8 @@ const config: Config = {
       colors: {
         brand: {
           orange: "#5750E8",
+          primary: "#5750E8",
+          primaryDark: "#33359D",
           gold: "#33359D",
           blue: "#2196C9",
           green: "#43A847",
@@ -24,16 +26,18 @@ const config: Config = {
         },
         bg: {
           light: "#F5F3EE",
+          canvas: "#FFFFFF",
           surface: "#FAFAF8",
+          "surface-2": "#F7F7FB",
           accent: "#F0EDE8",
           dark: "#06060C",
           dark2: "#0A0A14",
           darkcard: "#0F0F1B",
-          sidebar: "#08080F"
+          sidebar: "#0A0A12"
         }
       },
       fontFamily: {
-        display: ["var(--font-inter)", "var(--font-space)", "sans-serif"],
+        display: ["var(--font-space)", "var(--font-inter)", "sans-serif"],
         sans: ["var(--font-inter)", "sans-serif"],
         inter: ["var(--font-inter)", "sans-serif"],
         space: ["var(--font-space)", "sans-serif"],
@@ -55,7 +59,13 @@ const config: Config = {
         "glow-lg": "0 16px 64px rgba(87,80,232,0.28)",
         "glow-neon": "0 0 40px rgba(255,0,110,0.4)",
         glass: "0 10px 40px rgba(0,0,0,0.08)",
-        "glass-dark": "0 20px 60px rgba(0,0,0,0.4)"
+        "glass-dark": "0 20px 60px rgba(0,0,0,0.4)",
+        "card-light": "0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)",
+        "card-light-hover": "0 4px 12px rgba(16,24,40,0.08), 0 2px 4px rgba(16,24,40,0.06)",
+        "glass-light": "0 8px 32px rgba(16,24,40,0.06)"
+      },
+      borderRadius: {
+        xl2: "1.25rem"
       },
       animation: {
         "shimmer": "shimmer 2s linear infinite",

@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { RefreshCw, Plus, Gauge } from "@/lib/bootstrap-icons";
+import { RefreshCw, Plus, Gauge, List } from "@/lib/bootstrap-icons";
 import { getSocket } from "@/lib/socket";
+import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/auth-user";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
@@ -15,6 +16,7 @@ import { ConnectMailboxModal } from "@/components/correo/ConnectMailboxModal";
 import { BuzonACLModal } from "@/components/correo/BuzonACLModal";
 import { EditConnectionModal } from "@/components/correo/EditConnectionModal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { Button } from "@/components/ui/Button";
 import { Users, Trash2 } from "@/lib/bootstrap-icons";
 
 export default function CorreoPage() {
@@ -34,6 +36,9 @@ export default function CorreoPage() {
   const [editConexionId, setEditConexionId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerInitial, setComposerInitial] = useState<any | null>(null);
+  // Móvil: el riel de buzones/carpetas vive oculto por defecto (overlay), igual que el chat —
+  // dos paneles apretados lado a lado no caben en una pantalla de teléfono.
+  const [mobileRailOpen, setMobileRailOpen] = useState(false);
 
   const { isAdmin } = useCurrentUser();
   const activeBuzon = useMemo(() => buzones.find((b) => b.id === activeBuzonId), [buzones, activeBuzonId]);
@@ -229,22 +234,41 @@ export default function CorreoPage() {
 
   return (
     <AppShell>
-      <div className="h-[calc(100vh-4rem)] flex overflow-hidden">
-        <BuzonesRail
-          buzones={buzones}
-          activeBuzonId={activeBuzonId}
-          onSelectBuzon={setActiveBuzonId}
-          folder={folder}
-          onChangeFolder={setFolder}
-          unreadByBuzon={unreadByBuzon}
-          onConnectNew={() => { setConnectPrefill(null); setConnectOpen(true); }}
-          onDesvincular={desvincular}
-          onReconectar={reconectar}
-          onEditarConexion={(b) => setEditConexionId(b.id)}
-        />
+      <div className="h-[calc(100vh-4rem)] flex overflow-hidden relative">
+        {/* Móvil: overlay + backdrop, igual patrón que el Sidebar principal. Escritorio: panel fijo. */}
+        {mobileRailOpen && (
+          <div
+            onClick={() => setMobileRailOpen(false)}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 lg:hidden"
+          />
+        )}
+        <div className={cn(
+          "z-50",
+          mobileRailOpen ? "fixed inset-y-0 left-0 lg:static lg:inset-auto" : "hidden lg:block"
+        )}>
+          <BuzonesRail
+            buzones={buzones}
+            activeBuzonId={activeBuzonId}
+            onSelectBuzon={(id) => { setActiveBuzonId(id); setMobileRailOpen(false); }}
+            folder={folder}
+            onChangeFolder={(f) => { setFolder(f); setMobileRailOpen(false); }}
+            unreadByBuzon={unreadByBuzon}
+            onConnectNew={() => { setConnectPrefill(null); setConnectOpen(true); }}
+            onDesvincular={desvincular}
+            onReconectar={reconectar}
+            onEditarConexion={(b) => setEditConexionId(b.id)}
+          />
+        </div>
 
-        <div className="flex-1 flex flex-col min-w-0 bg-white/30 dark:bg-white/[0.01]">
-          <div className="px-5 py-3 border-b border-black/5 dark:border-white/10 flex items-center gap-3 bg-white/60 dark:bg-white/[0.02] backdrop-blur-xl">
+        <div className="flex-1 flex flex-col min-w-0 bg-bg-canvas dark:bg-white/[0.01]">
+          <div className="px-5 py-3 border-b border-black/5 dark:border-white/10 flex items-center gap-3 glass-topbar">
+            <button
+              onClick={() => setMobileRailOpen(true)}
+              aria-label="Ver buzones y carpetas"
+              className="lg:hidden shrink-0 h-9 w-9 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 flex items-center justify-center transition"
+            >
+              <List className="h-4 w-4" weight="bold" />
+            </button>
             <div className="flex-1 min-w-0">
               <div className="font-display font-black text-sm truncate">{activeBuzon?.email || "Sin buzón"}</div>
               <div className="text-[10px] text-neutral-400 font-ui uppercase tracking-[0.15em]">
@@ -263,13 +287,13 @@ export default function CorreoPage() {
             <button onClick={syncNow} title="Sincronizar ahora" disabled={!activeBuzonId} className="h-9 w-9 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-40 flex items-center justify-center transition">
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin text-brand-orange" : ""}`} />
             </button>
-            <button
+            <Button
               onClick={() => { setComposerInitial(null); setComposerOpen(true); }}
               disabled={!activeBuzonId}
-              className="h-9 px-4 rounded-xl bg-brand-orange text-white text-[11px] font-ui font-bold uppercase tracking-wider hover:bg-brand-orange/90 disabled:opacity-40 flex items-center gap-1.5 shadow-glow"
+              size="sm"
             >
               <Plus className="h-3.5 w-3.5" /> Nuevo
-            </button>
+            </Button>
           </div>
 
           <EmailActionsBar

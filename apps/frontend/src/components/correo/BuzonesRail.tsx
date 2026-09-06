@@ -84,7 +84,7 @@ export function BuzonesRail({
     <motion.aside
       animate={{ width: collapsed ? 76 : 272 }}
       transition={{ type: "spring", stiffness: 260, damping: 30 }}
-      className="shrink-0 relative h-full bg-white/40 dark:bg-white/[0.02] border-r border-black/5 dark:border-white/10 flex flex-col overflow-hidden"
+      className="shrink-0 relative h-full bg-bg-surface-2 dark:bg-white/[0.02] border-r border-black/5 dark:border-white/10 flex flex-col overflow-hidden"
     >
       <div className="p-4 border-b border-black/5 dark:border-white/10">
         <div className="flex items-center gap-3 mb-3 group/hdr">
@@ -240,7 +240,7 @@ export function BuzonesRail({
               onClick={() => onChangeFolder(f.key)}
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition relative group",
-                isActive ? "text-brand-orange" : "text-neutral-600 dark:text-neutral-300 hover:text-brand-orange hover:bg-black/[0.03] dark:hover:bg-white/5"
+                isActive ? "text-brand-primary bg-brand-primary/8" : "text-neutral-600 dark:text-neutral-300 hover:text-brand-primary hover:bg-black/[0.03] dark:hover:bg-white/5"
               )}
               title={f.label}
             >

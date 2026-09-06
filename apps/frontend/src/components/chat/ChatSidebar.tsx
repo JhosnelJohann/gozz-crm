@@ -320,7 +320,7 @@ export function ChatSidebar({ grupos, activeId, onSelect, onNewChatAction, onSta
   };
 
   return (
-    <aside className="relative w-80 flex-shrink-0 glass-sidebar flex flex-col h-full">
+    <aside className="relative w-full lg:w-80 flex-shrink-0 glass-sidebar flex flex-col h-full">
       <div className="p-3 border-b border-white/30 dark:border-white/5 flex items-center gap-2">
         <div className="flex items-center gap-2 flex-1 h-10 px-3 rounded-xl glass-input">
           <Search className="h-4 w-4 text-neutral-400" />

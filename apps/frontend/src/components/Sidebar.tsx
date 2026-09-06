@@ -1,17 +1,19 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   HouseSimple, Users, Briefcase, CheckSquare, ChatCircle,
- Envelope, GraduationCap, ChartLine, Gear,
-  CaretLeft, CaretRight, File, Sparkle, Clock, FolderSimple, AppWindow, Tray
+  Envelope, GraduationCap, ChartLine, Gear,
+  File, Clock, FolderSimple, AppWindow, Tray, CaretLeft, CaretRight, X
 } from "@/lib/bootstrap-icons";
 import { cn } from "@/lib/utils";
 import { useChatUnread } from "@/lib/useChatUnread";
 import { useTareasPendientes } from "@/lib/useTareasPendientes";
-import { BrandMark } from "@/components/magic/BrandMark";
+import { useCurrentUser, initialsOf } from "@/lib/auth-user";
+import { MoonMark } from "@/components/magic/MoonMark";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: HouseSimple },
@@ -28,46 +30,39 @@ const NAV = [
   { href: "/equipo", label: "Equipo", icon: Users },
   { href: "/asistencia", label: "Asistencia", icon: Clock },
   { href: "/aplicaciones", label: "Aplicaciones", icon: AppWindow },
-    { href: "/configuracion", label: "Configuración", icon: Gear }
+  { href: "/configuracion", label: "Configuración", icon: Gear }
 ];
 
+/**
+ * Rail de navegación (rediseño 2026):
+ *  · Escritorio (`lg` y arriba): se puede desplegar (264px, ícono + etiqueta) o contraer
+ *    (76px, solo ícono con tooltip) — el usuario elige con el botón del pie, y se recuerda
+ *    en localStorage entre sesiones.
+ *  · Móvil: diseño propio, no una versión angosta del de escritorio — un panel superpuesto
+ *    más ancho (296px) que SIEMPRE muestra ícono + etiqueta (en touch no hay hover para
+ *    tooltips, así que ocultar el texto ahí perjudica el descubrimiento).
+ *
+ * 🔴 El fondo se queda negro (`bg-sidebar`) SIEMPRE, en claro y en oscuro — es intencional:
+ * la referencia visual mantiene el rail oscuro sin importar el tema del resto de la app.
+ */
 export function Sidebar({ mobileOpen = false, onClose }: { mobileOpen?: boolean; onClose?: () => void }) {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
   const chatUnread = useChatUnread();
   const tareasPendientes = useTareasPendientes();
-  const barraRef = useRef<HTMLElement | null>(null);
+  const { user } = useCurrentUser();
+  const [collapsed, setCollapsed] = useState(false);
 
-  // ══════════════════════════════════════════════════════════════════════════════════════════
-  // COLAPSO AUTOMÁTICO — pedido en la reunión del 2026-08-24
-  //
-  // «Cuando yo cliquee que esté trabajando, que automáticamente él se colapse solito. Cuando tú
-  // cliques afuera de la barra negra.» El motivo es ganar ancho para la vista de contenido, que en
-  // el Drive es donde de verdad se trabaja.
-  //
-  // Aplica en TODO el CRM: decisión de Juan del 2026-08-24, sabiendo que cambia el hábito diario
-  // en todas las pantallas y no solo en Drive.
-  //
-  // 🔴 `click` y NO `pointerdown`/`mousedown`, y el motivo es el tablero de Tareas. Con
-  // `pointerdown` la barra empezaría a encogerse en el instante en que se APRIETA, o sea justo al
-  // arrancar un arrastre de dnd-kit: la anchura se anima mientras la biblioteca está midiendo
-  // dónde caen las columnas, y los destinos se mueven bajo el cursor. Un `click` no se dispara al
-  // arrastrar, así que arrastrar no colapsa nada y soltar tampoco.
-  //
-  // ⚠️ Solo en escritorio. Por debajo de `lg` la barra no se colapsa: es un panel superpuesto que
-  // se abre y se cierra con `mobileOpen`, y encogerlo a 76 px dejaría media barra flotando encima
-  // del contenido.
   useEffect(() => {
-    if (collapsed) return;                                  // ya está plegada: nada que hacer
-    const alInteractuarFuera = (e: MouseEvent) => {
-      if (window.matchMedia("(max-width: 1023px)").matches) return;   // móvil: manda `mobileOpen`
-      const barra = barraRef.current;
-      if (!barra || barra.contains(e.target as Node)) return;         // dentro de la barra no cuenta
-      setCollapsed(true);
-    };
-    document.addEventListener("click", alInteractuarFuera);
-    return () => document.removeEventListener("click", alInteractuarFuera);
-  }, [collapsed]);
+    const stored = localStorage.getItem("sidebar-collapsed");
+    if (stored === "1") setCollapsed(true);
+  }, []);
+
+  function toggleCollapsed() {
+    setCollapsed((v) => {
+      localStorage.setItem("sidebar-collapsed", v ? "0" : "1");
+      return !v;
+    });
+  }
 
   return (
     <>
@@ -79,135 +74,184 @@ export function Sidebar({ mobileOpen = false, onClose }: { mobileOpen?: boolean;
           mobileOpen ? "opacity-100" : "opacity-0 pointer-events-none"
         )}
       />
-    <motion.aside
-      ref={barraRef}
-      animate={{ width: collapsed ? 76 : 264 }}
-      transition={{ type: "spring", stiffness: 260, damping: 30 }}
-      className={cn(
-        "h-screen shrink-0 bg-bg-sidebar border-r border-white/5 text-white flex flex-col overflow-hidden z-50",
-        "fixed top-0 left-0 lg:sticky transition-transform duration-300 lg:transition-none",
-        mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
-      )}
-    >
-      {/* Subtle aurora gradient in sidebar */}
-      <div className="absolute inset-0 opacity-20 pointer-events-none">
-        <div className="absolute inset-0" style={{
-          background: "radial-gradient(ellipse at 20% 0%, rgba(87,80,232,0.15), transparent 50%), radial-gradient(ellipse at 80% 100%, rgba(131,56,236,0.12), transparent 50%)"
-        }} />
-      </div>
 
-      {/* Header */}
-      <div className="relative flex items-center gap-3 px-5 py-5 border-b border-white/5">
-        <div className="relative shrink-0">
-          <div className="absolute inset-0 rounded-xl bg-brand-orange/40 blur-lg animate-pulse-glow" />
-          <img src="/logo-gozz.png" alt="GOZZ" className="relative h-10 w-10 drop-shadow-[0_4px_20px_rgba(87,80,232,0.6)]" />
-        </div>
-        {!collapsed && (
-          <motion.div
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="flex-1 min-w-0"
+      {/* ── Escritorio: rail desplegable/contraíble ─────────────────────────────────────── */}
+      <motion.aside
+        animate={{ width: collapsed ? 76 : 264 }}
+        transition={{ type: "spring", stiffness: 260, damping: 30 }}
+        className="hidden lg:flex h-screen shrink-0 sticky top-0 bg-bg-sidebar border-r border-white/5 text-white flex-col overflow-hidden z-50"
+      >
+        <SidebarContent
+          pathname={pathname}
+          collapsed={collapsed}
+          chatUnread={chatUnread}
+          tareasPendientes={tareasPendientes}
+          user={user}
+          footer={
+            <button
+              onClick={toggleCollapsed}
+              aria-label={collapsed ? "Desplegar el menú" : "Contraer el menú"}
+              className={cn(
+                "flex items-center gap-2 rounded-xl px-3 py-2 text-white/50 hover:text-white hover:bg-white/[0.06] transition w-full",
+                collapsed && "justify-center px-0"
+              )}
+            >
+              {collapsed ? <CaretRight size={16} /> : <><CaretLeft size={16} /><span className="text-xs font-medium">Contraer</span></>}
+            </button>
+          }
+        />
+      </motion.aside>
+
+      {/* ── Móvil: panel propio, siempre con etiquetas ──────────────────────────────────── */}
+      <AnimatePresence>
+        {mobileOpen && (
+          <motion.aside
+            initial={{ x: -296 }}
+            animate={{ x: 0 }}
+            exit={{ x: -296 }}
+            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            className="lg:hidden fixed top-0 left-0 h-screen w-[296px] bg-bg-sidebar border-r border-white/5 text-white flex flex-col overflow-hidden z-50"
           >
-            <BrandMark size="sm" surface="dark" />
-
-            <div className="text-[9px] font-ui uppercase tracking-[0.2em] text-white/30 flex items-center gap-1">
-              <Sparkle className="h-2.5 w-2.5" weight="fill" />
-              CRM Oficial
-            </div>
-          </motion.div>
+            <SidebarContent
+              pathname={pathname}
+              collapsed={false}
+              chatUnread={chatUnread}
+              tareasPendientes={tareasPendientes}
+              user={user}
+              onNavigate={onClose}
+              headerExtra={
+                <button
+                  onClick={onClose}
+                  aria-label="Cerrar menú"
+                  className="ml-auto flex h-8 w-8 items-center justify-center rounded-lg text-white/50 hover:text-white hover:bg-white/[0.06]"
+                >
+                  <X size={18} />
+                </button>
+              }
+            />
+          </motion.aside>
         )}
+      </AnimatePresence>
+    </>
+  );
+}
+
+interface ContentProps {
+  pathname: string;
+  collapsed: boolean;
+  chatUnread: number;
+  tareasPendientes: number;
+  user: ReturnType<typeof useCurrentUser>["user"];
+  footer?: React.ReactNode;
+  headerExtra?: React.ReactNode;
+  onNavigate?: () => void;
+}
+
+function SidebarContent({ pathname, collapsed, chatUnread, tareasPendientes, user, footer, headerExtra, onNavigate }: ContentProps) {
+  return (
+    <>
+      <div className="absolute inset-0 opacity-20 pointer-events-none">
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse at 20% 0%, rgba(87,80,232,0.15), transparent 50%), radial-gradient(ellipse at 80% 100%, rgba(131,56,236,0.12), transparent 50%)"
+          }}
+        />
       </div>
 
-      <nav className="relative flex-1 py-4 px-3 space-y-1 overflow-y-auto scrollbar-thin">
+      <div className={cn("relative flex items-center h-[72px] w-full shrink-0 border-b border-white/5 gap-2", collapsed ? "justify-center px-0" : "px-5")}>
+        <Link href="/dashboard" aria-label="GOZZ" className="relative shrink-0" onClick={onNavigate}>
+          <div className="absolute inset-0 rounded-xl bg-brand-primary/40 blur-lg" />
+          <MoonMark size={30} className="relative" />
+        </Link>
+        {!collapsed && (
+          <span className="font-display font-bold text-white/80 text-sm tracking-tight">GOZZ</span>
+        )}
+        {headerExtra}
+      </div>
+
+      <nav className={cn("relative flex-1 w-full py-3 space-y-1 overflow-y-auto scrollbar-thin flex flex-col", collapsed ? "items-center" : "px-3")}>
         {NAV.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
-          return (
+          const badge = item.href === "/chat" ? chatUnread : item.href === "/tareas" ? tareasPendientes : 0;
+
+          const link = (
             <Link
-              key={item.href}
               href={item.href}
-              onClick={onClose}
+              onClick={onNavigate}
+              aria-label={item.label}
+              aria-current={active ? "page" : undefined}
               className={cn(
-                "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-300",
-                active
-                  ? "text-brand-orange bg-gradient-to-r from-brand-orange/20 via-brand-orange/10 to-transparent"
-                  : "text-white/55 hover:text-white hover:bg-white/[0.04]"
+                "relative flex items-center rounded-2xl transition-colors",
+                collapsed ? "justify-center h-11 w-11" : "gap-3 h-11 px-3 w-full"
               )}
-              title={collapsed ? item.label : undefined}
             >
               {active && (
-                <>
-                  <motion.div
-                    layoutId="sidebar-active"
-                    className="absolute left-0 top-1/2 -translate-y-1/2 h-7 w-1 rounded-r-full bg-gradient-to-b from-brand-orange to-brand-gold shadow-[0_0_20px_rgba(87,80,232,0.6)]"
-                  />
-                  <div className="absolute inset-0 rounded-xl opacity-50" style={{
-                    background: "linear-gradient(90deg, rgba(87,80,232,0.15) 0%, transparent 100%)"
-                  }} />
-                </>
+                <motion.div
+                  layoutId="sidebar-active"
+                  transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                  className={cn("absolute inset-0 bg-brand-primary shadow-glow", collapsed ? "rounded-2xl" : "rounded-xl")}
+                />
               )}
-              {(() => {
-                const badge = item.href === "/chat" ? chatUnread
-                  : item.href === "/tareas" ? tareasPendientes
-                  : 0;
-                return (
-                  <>
-                    <div className="relative shrink-0">
-                      <Icon className="relative h-[20px] w-[20px]" weight={active ? "duotone" : "regular"} />
-                      {badge > 0 && collapsed && (
-                        <span className="absolute -top-1.5 -right-1.5 h-4 min-w-[16px] px-1 rounded-full bg-brand-red text-white text-[9px] font-bold flex items-center justify-center ring-2 ring-bg-sidebar">
-                          {badge > 99 ? "99+" : badge}
-                        </span>
-                      )}
-                    </div>
-                    {!collapsed && (
-                      <motion.span
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="relative text-sm font-medium truncate"
-                      >
-                        {item.label}
-                      </motion.span>
-                    )}
-                    {!collapsed && badge > 0 && (
-                      <span className="relative ml-auto h-5 min-w-[20px] px-1.5 rounded-full bg-brand-red text-white text-[10px] font-bold flex items-center justify-center shadow-[0_0_12px_rgba(239,68,68,0.6)]">
-                        {badge > 99 ? "99+" : badge}
-                      </span>
-                    )}
-                  </>
-                );
-              })()}
+              <span className="relative shrink-0">
+                <Icon
+                  size={22}
+                  weight={active ? "duotone" : "regular"}
+                  className={cn("transition-colors", active ? "text-white" : "text-white/50")}
+                />
+                {badge > 0 && collapsed && (
+                  <span className="absolute -top-1.5 -right-1.5 h-4 min-w-[16px] px-1 rounded-full bg-brand-red text-white text-[9px] font-bold flex items-center justify-center ring-2 ring-bg-sidebar">
+                    {badge > 99 ? "99+" : badge}
+                  </span>
+                )}
+              </span>
+              {!collapsed && (
+                <span className={cn("relative text-sm font-medium truncate flex-1", active ? "text-white" : "text-white/60")}>
+                  {item.label}
+                </span>
+              )}
+              {!collapsed && badge > 0 && (
+                <span className="relative h-5 min-w-[20px] px-1.5 rounded-full bg-brand-red text-white text-[10px] font-bold flex items-center justify-center">
+                  {badge > 99 ? "99+" : badge}
+                </span>
+              )}
             </Link>
+          );
+
+          return collapsed ? (
+            <Tooltip key={item.href} label={item.label} side="right">
+              {link}
+            </Tooltip>
+          ) : (
+            <div key={item.href}>{link}</div>
           );
         })}
       </nav>
 
-      {/* Collapse button (solo escritorio) */}
-      <div className="relative p-3 border-t border-white/5 hidden lg:block">
-        {/* 🔴 Naranja de MARCA y sólido, no `text-white/40`: «esta flechita, como no resalta casi,
-            se pierde honestamente». Con el botón entero naranja se ve dónde se pulsa, que es lo que
-            hace falta ahora que la barra se pliega sola. Token `brand-orange`, nunca un hex suelto
-            (CONVENCIONES §4.3). */}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          aria-label={collapsed ? "Expandir el menú" : "Colapsar el menú"}
-          className={cn(
-            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 bg-brand-orange text-white transition",
-            "hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60",
-            collapsed && "justify-center px-0"
-          )}
-        >
-          {collapsed ? (
-            <CaretRight className="h-[18px] w-[18px]" weight="bold" />
-          ) : (
-            <>
-              <CaretLeft className="h-[18px] w-[18px]" weight="bold" />
-              <span className="text-[10px] font-ui uppercase tracking-[0.15em]">Colapsar</span>
-            </>
-          )}
-        </button>
+      <div className={cn("relative w-full py-3 border-t border-white/5 flex flex-col gap-1", collapsed ? "items-center px-0" : "px-3")}>
+        {footer}
+        {(() => {
+          const link = (
+            <Link
+              href="/configuracion"
+              onClick={onNavigate}
+              aria-label="Configuración"
+              className={cn(
+                "flex items-center rounded-xl transition hover:bg-white/[0.06]",
+                collapsed ? "justify-center h-10 w-10" : "gap-3 h-11 px-3 w-full"
+              )}
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-primary to-brand-gold text-white text-xs font-bold">
+                {user ? initialsOf(user.nombre) : <Gear size={16} weight="regular" />}
+              </span>
+              {!collapsed && <span className="text-sm font-medium text-white/70 truncate">{user?.nombre || "Configuración"}</span>}
+            </Link>
+          );
+          return collapsed ? <Tooltip label={user?.nombre || "Configuración"} side="right">{link}</Tooltip> : link;
+        })()}
       </div>
-    </motion.aside>
     </>
   );
 }

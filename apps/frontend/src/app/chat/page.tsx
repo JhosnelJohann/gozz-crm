@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Upload, X, Copy, Trash2, Forward, Pin, ChevronDown, MessagesSquare, Sparkles, Plus } from "@/lib/bootstrap-icons";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
+import { cn } from "@/lib/utils";
 import { getSocket } from "@/lib/socket";
 import { ChatSidebar, type ChatListItem } from "@/components/chat/ChatSidebar";
 import { ChatHeader } from "@/components/chat/ChatHeader";
@@ -552,18 +553,23 @@ export default function ChatPage() {
 
   return (
     <AppShell>
-      <div className="flex h-[calc(100vh-64px)]">
-        <ChatSidebar
-          grupos={grupos}
-          activeId={activeId}
-          onSelect={setActiveId}
-          onNewChatAction={onNewChatAction}
-          onStartDM={onStartDM}
-          onReload={loadGrupos}
-          typingByGroup={typingByGroup}
-        />
+      {/* Móvil: una sola vista a la vez (lista o hilo), como cualquier app de mensajería —
+          nunca las dos apretadas lado a lado en una pantalla de teléfono. Escritorio (`lg`):
+          ambas visibles siempre, como hoy. */}
+      <div className="flex h-[calc(100vh-64px)] overflow-hidden">
+        <div className={cn("w-full lg:w-auto", activeId ? "hidden lg:block" : "block")}>
+          <ChatSidebar
+            grupos={grupos}
+            activeId={activeId}
+            onSelect={setActiveId}
+            onNewChatAction={onNewChatAction}
+            onStartDM={onStartDM}
+            onReload={loadGrupos}
+            typingByGroup={typingByGroup}
+          />
+        </div>
         <div
-          className="flex-1 flex flex-col min-w-0 relative"
+          className={cn("flex-1 min-w-0 relative flex-col", activeId ? "flex" : "hidden lg:flex")}
           onDragEnter={onDragEnter}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
@@ -571,7 +577,7 @@ export default function ChatPage() {
         >
           {active ? (
             <>
-              <ChatHeader grupo={active} typingNames={activeTypingNames} />
+              <ChatHeader grupo={active} typingNames={activeTypingNames} onBack={() => setActiveId(null)} />
               {pinnedList.length > 0 && (
                 <div className="border-b border-black/5 dark:border-white/5 bg-amber-50/80 dark:bg-amber-500/10">
                   <div className="flex items-center gap-2.5 px-4 py-2">

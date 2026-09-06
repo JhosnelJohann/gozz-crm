@@ -14,14 +14,15 @@
     "postbuild": "rm -rf .next/standalone/apps/frontend/.next/static .next/standalone/apps/frontend/public && cp -r .next/static .next/standalone/apps/frontend/.next/static && cp -r public .next/standalone/apps/frontend/public && echo \"[postbuild] static + public copiados al standalone\""
   },
   "dependencies": {
-    "@gozz/shared-types": "workspace:*",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@gozz/shared-types": "workspace:*",
     "@iconify/react": "^6.0.2",
     "@livekit/components-react": "^2.6",
     "@livekit/components-styles": "^1.1",
     "@livekit/track-processors": "^0.5",
+    "@phosphor-icons/react": "^2.1.10",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.0",
     "@studio-freight/lenis": "^1.0.42",

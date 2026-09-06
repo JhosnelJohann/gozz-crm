@@ -21,7 +21,16 @@ interface ItemProps extends HTMLAttributes<HTMLDivElement> {
 
 export function BentoItem({ span = "col-span-12 md:col-span-6 lg:col-span-4", rowSpan = "", className, children, ...props }: ItemProps) {
   return (
-    <div className={cn("group relative overflow-hidden rounded-3xl glass spotlight-card", span, rowSpan, className)} {...props}>
+    <div
+      className={cn(
+        "group relative overflow-hidden rounded-xl2 spotlight-card",
+        "bg-bg-canvas dark:bg-bg-darkcard border border-black/5 dark:border-white/[0.06] shadow-card-light transition-shadow hover:shadow-card-light-hover",
+        span,
+        rowSpan,
+        className
+      )}
+      {...props}
+    >
       {children}
     </div>
   );

@@ -1,7 +1,14 @@
 "use client";
 import { motion } from "framer-motion";
-import { Inbox, Sparkles } from "@/lib/bootstrap-icons";
+import { Sparkle } from "@/lib/bootstrap-icons";
+import { MoonMark } from "@/components/magic/MoonMark";
 import { ShimmerButton } from "@/components/magic/ShimmerButton";
+
+const SPARKLES = [
+  { top: "8%", left: "18%", delay: 0 },
+  { top: "22%", left: "78%", delay: 0.5 },
+  { top: "72%", left: "72%", delay: 1 }
+];
 
 export function EmailEmptyState({ onConnectMailbox }: { onConnectMailbox?: () => void }) {
   return (
@@ -10,28 +17,38 @@ export function EmailEmptyState({ onConnectMailbox }: { onConnectMailbox?: () =>
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ type: "spring", stiffness: 200, damping: 18 }}
-        className="relative mb-6"
+        className="relative mb-6 h-24 w-24"
       >
-        <div className="absolute inset-0 rounded-full bg-brand-orange/20 blur-2xl animate-pulse-glow" />
-        <div className="relative h-24 w-24 rounded-full gradient-orange flex items-center justify-center shadow-glow-lg">
-          <Inbox className="h-10 w-10 text-white" strokeWidth={1.5} />
+        {SPARKLES.map((s, i) => (
+          <motion.div
+            key={i}
+            className="absolute"
+            style={{ top: s.top, left: s.left }}
+            animate={{ opacity: [0.25, 1, 0.25] }}
+            transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut", delay: s.delay }}
+          >
+            <Sparkle size={12} weight="fill" className="text-brand-primary" />
+          </motion.div>
+        ))}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <MoonMark size={64} animated />
         </div>
       </motion.div>
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="inline-flex items-center gap-2 text-brand-orange font-ui uppercase text-[11px] tracking-[0.2em] font-bold mb-3"
+        className="text-brand-primary text-xs font-semibold mb-3"
       >
-        <Sparkles className="h-3.5 w-3.5" /> Bandeja vacía
+        Bandeja vacía
       </motion.div>
       <motion.h3
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.15 }}
-        className="font-display text-2xl font-black mb-2"
+        className="font-display text-2xl font-bold mb-2"
       >
-        No hay correos <span className="text-gradient-orange">aún</span>
+        Tu bandeja está <span className="text-brand-primary">en calma</span>
       </motion.h3>
       <motion.p
         initial={{ opacity: 0, y: 12 }}

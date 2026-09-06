@@ -201,7 +201,7 @@ export default function DashboardPage() {
                     <YAxis tick={{ fontSize: 10, fill: "#888" }} axisLine={false} tickLine={false} allowDecimals={false} />
                     <Tooltip
                       cursor={{ fill: "rgba(87,80,232,0.08)" }}
-                      contentStyle={{ borderRadius: 12, border: "1px solid rgba(87,80,232,0.3)", background: "rgba(10,10,20,0.95)", color: "white", backdropFilter: "blur(20px)" }}
+                      contentStyle={{ borderRadius: 12, border: "1px solid rgba(87,80,232,0.2)", background: "rgba(255,255,255,0.95)", color: "#0A0A12", backdropFilter: "blur(20px)" }}
                     />
                     <Bar dataKey="count" radius={[8, 8, 0, 0]}>
                       {byEtapa.map((e, i) => (<Cell key={i} fill={e.color} />))}
@@ -225,7 +225,7 @@ export default function DashboardPage() {
                     <Pie data={bySLA} cx="50%" cy="50%" innerRadius={40} outerRadius={70} dataKey="value" paddingAngle={4}>
                       {bySLA.map((s, i) => <Cell key={i} fill={s.color} />)}
                     </Pie>
-                    <Tooltip contentStyle={{ borderRadius: 12, background: "rgba(10,10,20,0.95)", border: "1px solid rgba(255,255,255,0.1)", color: "white" }} />
+                    <Tooltip contentStyle={{ borderRadius: 12, background: "rgba(255,255,255,0.95)", border: "1px solid rgba(16,24,40,0.1)", color: "#0A0A12" }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>

@@ -41,7 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <PageTitle />
-      <div className="flex min-h-screen bg-bg-light dark:bg-bg-dark text-fg-light dark:text-fg-dark relative">
+      <div className="flex min-h-screen bg-bg-canvas dark:bg-bg-dark text-fg-light dark:text-fg-dark relative">
         <Sidebar mobileOpen={navOpen} onClose={() => setNavOpen(false)} />
         <div className="flex-1 min-w-0 flex flex-col relative">
           <Topbar onMenuClick={() => setNavOpen(true)} />

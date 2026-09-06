@@ -215,3 +215,57 @@ Usando `modules/oportunidades/` como plantilla:
 - El plan original no mencionaba `gozz.contactos_merge_log`; se descubrió durante la Fase 5 que
   había sido eliminada por error en la Fase 2 y se restauró (ver sección 4 de este documento no
   aplica — está documentado como tabla activa en el comentario de la propia migración SQL).
+
+## 7. Rediseño visual 2026 — qué se cubrió y qué queda
+
+La interfaz heredó el lenguaje visual oscuro/neón del producto original. Esta entrega migró el
+shell compartido y 3 páginas de referencia a un lenguaje visual claro tipo SaaS elite (iconos
+Phosphor Duotone, glassmorphism claro, tipografía sentence-case), siguiendo el mismo patrón de
+"slice de referencia + hoja de ruta" que el resto de este documento.
+
+**Cubierto en esta entrega:**
+- Sistema de iconos: `src/lib/bootstrap-icons.tsx` reescrito para envolver `@phosphor-icons/react`
+  (peso `duotone` por defecto) — los 227 nombres de export se mantuvieron intactos, así que los
+  ~130+ archivos consumidores no cambiaron ni una línea. `bootstrap-icons` (paquete de fuente)
+  sigue instalado por si queda markup `<i class="bi-...">` suelto en áreas legacy.
+- Tokens nuevos en `tailwind.config.ts`/`globals.css`: `brand.primary` (alias de `brand.orange`,
+  mismo `#5750E8`), `bg.canvas`/`bg.surface-2`, sombras `shadow-card-light*`, radio `rounded-xl2`,
+  y las clases de glassmorphism claro `.glass-light`/`.glass-topbar`/`.glass-panel` (nuevas, no
+  reemplazan `.glass`/`.glass-strong`, que siguen sirviendo a las áreas legacy).
+- Primitivos nuevos en `src/components/ui/`: `Button.tsx`, `Card.tsx`, `Badge.tsx`, `Tooltip.tsx`
+  (con `cva`, ya estaba instalado). No existían antes — todo era Tailwind ad hoc por página.
+- `Sidebar.tsx` reconstruido a rail de solo-iconos (antes nav expandible con etiquetas); se quitó
+  el auto-colapso al hacer click afuera (decisión de crm-tadi del 2026-08-24, ya no aplica sin
+  estado expandido). `Topbar.tsx` re-skinneado a claro (ya era theme-aware, no se reconstruyó).
+- Modo oscuro: se mantiene disponible vía el toggle existente en Topbar, pero claro pasa a ser el
+  default — se quitó el auto-oscuro por hora del día en `layout.tsx` (que además causaba un flash
+  oscuro→claro real en horario nocturno).
+- Páginas rediseñadas de punta a punta: `login`, `correo` (`BuzonesRail`, `EmailList`,
+  `EmailEmptyState`), `dashboard` (tarjetas `BentoItem` con el primitivo `Card`, tooltips de
+  Recharts recoloreados).
+- Nuevo isotipo vectorial (`public/logo-gozz.svg` + `MoonMark.tsx` animable con Framer Motion),
+  reemplaza el PNG como ícono principal. `BrandMark.tsx` ya tenía una prop `surface="light"` que
+  nunca se usaba — el login rediseñado es el primer lugar real donde se ejercita.
+
+**Queda con el look anterior** (heredan el shell nuevo automáticamente vía `AppShell.tsx`, pero su
+contenido interno sigue con la estética previa): academia, aplicaciones, asistencia, chat,
+configuracion, contactos, drive, equipo, oportunidades, puntajes, reportes, solicitudes, tareas,
+tramites, videollamada, view (16 áreas).
+
+**Orden sugerido de migración**: `contactos`/`oportunidades` primero (ya son los slices de
+arquitectura limpia — buen momento para rediseñarlos visualmente también), luego `tareas`/`chat`
+(uso diario alto, y `chat` ya tiene un panel lateral estructuralmente parecido al de Correo), y
+`drive`/`reportes`/`videollamada` al final (integraciones externas, más riesgo).
+
+**Deuda conocida que esta entrega no resuelve**:
+- El parche "LIGHT MODE CONTRAST AUTO-FIX" en `globals.css` sigue siendo necesario mientras las 16
+  áreas legacy usen `.glass`/`.glass-strong` — no retirar hasta que esas áreas migren.
+- La fuente Oswald (`font-ui`) sigue cargada e instalada — los botones/labels nuevos usan Inter
+  semibold sentence-case en su lugar, pero el resto de la app todavía depende de Oswald. Retirar
+  la fuente cuando ya nadie la use.
+- ~40 de los 227 iconos no tienen equivalente exacto en Phosphor y usan el sustituto visual más
+  cercano (documentado en el propio `bootstrap-icons.tsx` en el commit del cambio) — ninguno de
+  esos casos se usa en las 3 páginas rediseñadas, pero vale revisarlos visualmente si aparecen en
+  páginas legacy.
+- Los modales del módulo de Correo (composer, conectar buzón, ACL, etc.) no se tocaron — heredan
+  `AnimatedModal`/`.modal-surface` sin cambios.

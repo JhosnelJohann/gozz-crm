@@ -54,13 +54,13 @@ export function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
 
   return (
     <>
-      <header className="sticky top-0 z-40 backdrop-blur-2xl bg-bg-light/60 dark:bg-bg-dark/60 border-b border-black/5 dark:border-white/5">
+      <header className="sticky top-0 z-40 glass-topbar">
         <div className="flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-3">
           {/* Hamburguesa (solo móvil) */}
           <button
             onClick={onMenuClick}
             aria-label="Abrir menú"
-            className="lg:hidden shrink-0 h-10 w-10 flex items-center justify-center rounded-xl bg-white/60 dark:bg-white/[0.03] border border-black/5 dark:border-white/10 hover:bg-white dark:hover:bg-white/[0.08] transition"
+            className="lg:hidden shrink-0 h-10 w-10 flex items-center justify-center rounded-xl bg-bg-surface-2 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:bg-white dark:hover:bg-white/[0.08] transition"
           >
             <List className="h-5 w-5" weight="bold" />
           </button>
@@ -68,11 +68,11 @@ export function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
           {/* Command palette trigger */}
           <button
             onClick={() => setCmdOpen(true)}
-            className="flex items-center gap-3 flex-1 max-w-md h-10 px-3 sm:px-4 rounded-xl bg-white/60 dark:bg-white/[0.03] border border-black/5 dark:border-white/10 hover:border-brand-orange/30 dark:hover:border-brand-orange/40 transition-all group"
+            className="flex items-center gap-3 flex-1 max-w-md h-10 px-3 sm:px-4 rounded-xl bg-bg-surface-2 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:border-brand-primary/30 dark:hover:border-brand-primary/40 transition-all group"
           >
-            <MagnifyingGlass className="h-4 w-4 text-neutral-400 group-hover:text-brand-orange transition-colors shrink-0" />
+            <MagnifyingGlass className="h-4 w-4 text-neutral-400 group-hover:text-brand-primary transition-colors shrink-0" />
             <span className="text-sm text-neutral-400 flex-1 text-left truncate"><span className="sm:hidden">Buscar…</span><span className="hidden sm:inline">Buscar o ejecutar comando…</span></span>
-            <div className="hidden sm:flex items-center gap-1 text-[10px] font-ui uppercase tracking-wider text-neutral-400 bg-black/5 dark:bg-white/5 rounded px-1.5 py-0.5">
+            <div className="hidden sm:flex items-center gap-1 text-[10px] font-semibold text-neutral-400 bg-black/5 dark:bg-white/5 rounded px-1.5 py-0.5">
               <CommandIcon className="h-2.5 w-2.5" weight="bold" />
               K
             </div>
@@ -95,7 +95,7 @@ export function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
           {/* Theme toggle */}
           <button
             onClick={handleToggleTheme}
-            className="h-10 w-10 flex items-center justify-center rounded-xl bg-white/60 dark:bg-white/[0.03] border border-black/5 dark:border-white/10 hover:bg-white dark:hover:bg-white/[0.08] transition"
+            className="h-10 w-10 flex items-center justify-center rounded-xl bg-bg-surface-2 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:bg-white dark:hover:bg-white/[0.08] transition"
             title="Cambiar tema"
           >
             {isDark ? (
@@ -112,7 +112,7 @@ export function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => setMenuOpen(!menuOpen)}
-              className="flex items-center gap-2 h-10 pl-1 pr-3 rounded-xl bg-white/60 dark:bg-white/[0.03] border border-black/5 dark:border-white/10 hover:bg-white dark:hover:bg-white/[0.08] transition"
+              className="flex items-center gap-2 h-10 pl-1 pr-3 rounded-xl bg-bg-surface-2 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:bg-white dark:hover:bg-white/[0.08] transition"
             >
               <div className="h-8 w-8 rounded-lg overflow-hidden bg-gradient-to-br from-brand-orange to-neon-magenta flex items-center justify-center text-white font-ui font-bold text-xs shadow-glow">
                 {me?.foto_perfil_url ? <img src={me.foto_perfil_url} alt={me.nombre} className="h-full w-full object-cover" /> : initials}
@@ -129,7 +129,7 @@ export function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 8 }}
-                  className="absolute right-0 mt-2 w-56 glass-strong rounded-2xl overflow-hidden z-50 shadow-glass-dark"
+                  className="absolute right-0 mt-2 w-56 glass-panel rounded-2xl overflow-hidden z-50"
                 >
                   <div className="px-4 py-3 border-b border-black/5 dark:border-white/5 flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full overflow-hidden bg-gradient-to-br from-brand-orange to-neon-magenta flex items-center justify-center text-white font-bold text-xs">

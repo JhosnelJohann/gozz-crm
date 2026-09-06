@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Video, MoreHorizontal, Hash, Users, X, Plus, Pencil, Briefcase, CheckSquare, Trash2, Info } from "@/lib/bootstrap-icons";
+import { Video, MoreHorizontal, Hash, Users, X, Plus, Pencil, Briefcase, CheckSquare, Trash2, Info, ArrowLeft } from "@/lib/bootstrap-icons";
 import { CoPilotAvatar } from "./CoPilotMessage";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
@@ -15,6 +15,8 @@ import type { ChatListItem } from "./ChatSidebar";
 interface Props {
   grupo: ChatListItem;
   typingNames?: string[];   // si hay alguien escribiendo en este chat, se muestra "escribiendo..."
+  /** Solo en móvil: vuelve a la lista de chats (patrón app de mensajería — una vista a la vez). */
+  onBack?: () => void;
 }
 
 function MembersModal({ open, onClose, grupoId, grupoNombre }: { open: boolean; onClose: () => void; grupoId: string; grupoNombre: string }) {
@@ -152,7 +154,7 @@ function EditGroupModal({ open, onClose, grupoId, nombre, avatarUrl, onSaved }: 
   );
 }
 
-export function ChatHeader({ grupo, typingNames }: Props) {
+export function ChatHeader({ grupo, typingNames, onBack }: Props) {
   const router = useRouter();
   const presence = usePresence();
   const [starting, setStarting] = useState(false);
@@ -314,7 +316,16 @@ export function ChatHeader({ grupo, typingNames }: Props) {
 
   return (
     <>
-      <div className="h-18 px-5 py-3 flex items-center gap-3 glass-header z-10">
+      <div className="h-18 px-3 sm:px-5 py-3 flex items-center gap-2 sm:gap-3 glass-header z-10">
+        {onBack && (
+          <button
+            onClick={onBack}
+            aria-label="Volver a los chats"
+            className="lg:hidden shrink-0 h-9 w-9 -ml-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center text-neutral-600 dark:text-white/80 transition"
+          >
+            <ArrowLeft className="h-5 w-5" strokeWidth={2} />
+          </button>
+        )}
         <div className="relative flex-shrink-0">
           {grupo.tipo === "copilot" ? (
             <CoPilotAvatar size={44} />
