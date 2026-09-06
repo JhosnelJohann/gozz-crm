@@ -16,7 +16,6 @@ function buildQuery(filtros: ContactosFiltros, page: number, pageSize: number): 
   p.set("pageSize", String(pageSize));
   if (filtros.q) p.set("q", filtros.q);
   if (filtros.tramite) p.set("tramite", filtros.tramite);
-  if (filtros.source) p.set("source", filtros.source);
   if (filtros.soloDuplicados) p.set("revision_dedup", "1");
   if (filtros.sinFechaNac) p.set("sin_fecha_nacimiento", "1");
   if (filtros.responsable) p.set("responsable", filtros.responsable);

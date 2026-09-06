@@ -77,7 +77,6 @@ export interface FiltrosContactos {
   estado?: string;
   tipo_cliente?: string;
   tramite?: string;
-  source?: string;          // pipedrive | zoho | bitrix | native
   archivados?: boolean;     // opt-in admin: ver la papelera en vez del listado normal
   motivo?: string;          // papelera: separa lo archivado a mano de lo que arrastró una corrida
   usuario?: string;         // papelera: uuid de quien archivó, o SIN_USUARIO
@@ -124,7 +123,6 @@ export function leerFiltros(src: any): FiltrosContactos {
     estado: String(src?.estado ?? "").trim() || undefined,
     tipo_cliente: String(src?.tipo_cliente ?? "").trim() || undefined,
     tramite: String(src?.tramite ?? "").trim() || undefined,
-    source: String(src?.source ?? "").trim() || undefined,
     archivados: ["1", "true", "yes"].includes(String(src?.archivados ?? "").toLowerCase()) || src?.archivados === true,
     motivo: String(src?.motivo ?? "").trim() || undefined,
     // Mismos nombres de parámetro que la papelera del Drive (`usuario` / `desde` / `hasta`), para
@@ -163,14 +161,7 @@ export function construirFiltroContactos(f: FiltrosContactos, desde = 0): { wher
   }
   if (f.estado) wheres.push(`direccion_estado = ${addP(f.estado)}`);
   if (f.tipo_cliente) wheres.push(`tipo_cliente = ${addP(f.tipo_cliente)}`);
-  if (f.tramite) {
-    const p = addP(f.tramite);
-    wheres.push(`(estatus_migratorio_tipo = ${p} OR pipedrive_tramites @> ARRAY[${p}]::text[] OR zoho_tramites @> ARRAY[${p}]::text[])`);
-  }
-  if (f.source === "pipedrive") wheres.push(`pipedrive_person_id IS NOT NULL`);
-  if (f.source === "zoho") wheres.push(`zoho_id IS NOT NULL`);
-  if (f.source === "bitrix") wheres.push(`bitrix_contact_id IS NOT NULL`);
-  if (f.source === "native") wheres.push(`pipedrive_person_id IS NULL AND zoho_id IS NULL AND bitrix_contact_id IS NULL`);
+  if (f.tramite) wheres.push(`estatus_migratorio_tipo = ${addP(f.tramite)}`);
   // Papelera: motivo, autor y rango de fechas. Las cláusulas viven en `lib/contactos-papelera.ts`
   // —una sola definición, que es la que prueban los tests— y se componen aquí, en el constructor
   // único, para que listado, contador y selección masiva compartan WHERE. Solo con `archivados=1`:

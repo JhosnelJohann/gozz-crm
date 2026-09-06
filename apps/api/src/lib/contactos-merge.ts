@@ -127,10 +127,9 @@ export async function descubrirFKs(): Promise<{ fks: FkContacto[]; omitidas: str
 // --------------------------------------------------------------------------------------------
 const EXACTOS = new Set(["a_number", "ssn_encrypted", "fecha_nacimiento", "whatsapp", "email", "telefono"]);
 const PREFIJOS = ["pasaporte_", "direccion_", "estatus_"];
-const ORIGEN_IDS = new Set(["bitrix_contact_id", "pipedrive_person_id", "zoho_id"]);
 const esEnriquecible = (col: string) =>
   EXACTOS.has(col) || PREFIJOS.some((p) => col.startsWith(p)) || col.includes("uscis") ||
-  ORIGEN_IDS.has(col) || col.endsWith("_tramites");
+  col.endsWith("_tramites");
 
 export interface ColumnasElegibles {
   elegibles: string[];
@@ -158,11 +157,11 @@ export const MOTIVO_SENSIBLE = "Dato sensible: no se muestra ni se elige desde a
  * Qué columnas puede elegir el humano. Se resuelve contra el esquema REAL, no contra una lista
  * escrita a mano, porque varias columnas de contactos_cache nacieron fuera de migraciones.
  *
- * Dos exclusiones que NO son cosméticas:
- *  · ARRAY (`*_tramites`): pasarles un valor por parámetro revienta con "malformed array literal".
- *  · ÍNDICE ÚNICO (bitrix_contact_id, pipedrive_person_id, zoho_id, zoho_module):
- *    copiarlas al maestro mientras el perdedor archivado conserva las suyas VIOLA el índice único.
- *    El maestro conserva sus ids de origen; el perdedor los suyos.
+ * Dos exclusiones que NO son cosméticas (resueltas contra el esquema real, no una lista fija —
+ * aplican a cualquier columna futura que caiga en estos dos casos, no solo a las de hoy):
+ *  · ARRAY: pasarles un valor por parámetro revienta con "malformed array literal".
+ *  · ÍNDICE ÚNICO: copiarla al maestro mientras el perdedor archivado conserva la suya VIOLA el
+ *    índice único. El maestro conserva su id de origen; el perdedor el suyo.
  */
 export async function columnasEnriquecibles(): Promise<ColumnasElegibles> {
   const cols = await query<any>(

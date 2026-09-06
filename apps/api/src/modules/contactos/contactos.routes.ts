@@ -160,8 +160,6 @@ const COLS_LISTA = `
   id, nombre_completo,
   ${colEmail()}, telefono, whatsapp,
   tipo_cliente, estatus_migratorio, estatus_migratorio_tipo,
-  bitrix_contact_id, zoho_id, pipedrive_person_id,
-  pipedrive_tramites, zoho_tramites,
   revision_dedup_grupo,
   responsable_user_id,
   created_at`;
@@ -221,9 +219,6 @@ const COLS_DETALLE = `
   correo_uscis, usuario_uscis,
   tipo_cliente, referido_por_contacto_id, saldo_referidos_usd,
   etiquetas, custom_fields, notas_internas,
-  bitrix_contact_id, bitrix_tramites, bitrix_imported_at,
-  zoho_id, zoho_module, zoho_tramites, zoho_imported_at,
-  pipedrive_person_id, pipedrive_tramites, pipedrive_imported_at,
   saneamiento_revision, saneamiento_motivo, saneamiento_aplicado_en,
   archivado, archivado_motivo, fusionado_en_contacto_id,
   revision_dedup, revision_dedup_grupo,
@@ -332,33 +327,8 @@ export function registerContactosRoutes(app: Express) {
         WHERE estatus_migratorio_tipo IS NOT NULL AND ${NO_ARCHIVADOS}
         GROUP BY estatus_migratorio_tipo`
     );
-    const tramitesPipedrive = await query<any>(
-      `SELECT unnest(pipedrive_tramites) AS tramite, count(*)::int AS n
-         FROM gozz.contactos_cache
-        WHERE pipedrive_tramites IS NOT NULL AND array_length(pipedrive_tramites,1) > 0 AND ${NO_ARCHIVADOS}
-        GROUP BY tramite`
-    );
-    const tramitesZoho = await query<any>(
-      `SELECT unnest(zoho_tramites) AS tramite, count(*)::int AS n
-         FROM gozz.contactos_cache
-        WHERE zoho_tramites IS NOT NULL AND array_length(zoho_tramites,1) > 0 AND ${NO_ARCHIVADOS}
-        GROUP BY tramite`
-    );
-    const merge = new Map<string, number>();
-    for (const r of [...tramitesEnum, ...tramitesPipedrive, ...tramitesZoho]) {
-      merge.set(r.tramite, (merge.get(r.tramite) || 0) + (r.n || 0));
-    }
-    const tramites = Array.from(merge.entries()).map(([tramite, n]) => ({ tramite, count: n })).sort((a, b) => b.count - a.count);
-    const sources = await query<any>(
-      `SELECT
-         count(*) FILTER (WHERE pipedrive_person_id IS NOT NULL)::int AS pipedrive,
-         count(*) FILTER (WHERE zoho_id IS NOT NULL)::int AS zoho,
-         count(*) FILTER (WHERE bitrix_contact_id IS NOT NULL)::int AS bitrix,
-         count(*) FILTER (WHERE pipedrive_person_id IS NULL AND zoho_id IS NULL AND bitrix_contact_id IS NULL)::int AS native
-       FROM gozz.contactos_cache
-       WHERE ${NO_ARCHIVADOS}`
-    );
-    res.json({ tramites, sources: sources[0] || { pipedrive: 0, zoho: 0, bitrix: 0, native: 0 } });
+    const tramites = tramitesEnum.map((r: any) => ({ tramite: r.tramite, count: r.n })).sort((a: any, b: any) => b.count - a.count);
+    res.json({ tramites });
   });
 
   // ---- IMPACTO (ANTES que /:id para que Express no lo tome por un id) ----
@@ -944,8 +914,7 @@ export function registerContactosRoutes(app: Express) {
     const elegibles = elegiblesMotor.filter((c) => !CAMPOS_NO_ELEGIBLES_POR_SENSIBLES.includes(c));
     for (const c of CAMPOS_NO_ELEGIBLES_POR_SENSIBLES) noElegibles[c] = MOTIVO_SENSIBLE;
 
-    const visibles = [...elegibles, "id", "nombre_completo", "created_at", "updated_at", "archivado",
-      "bitrix_contact_id", "pipedrive_person_id", "zoho_id", "pipedrive_tramites", "zoho_tramites", "bitrix_tramites"]
+    const visibles = [...elegibles, "id", "nombre_completo", "created_at", "updated_at", "archivado"]
       .filter((c) => !COLUMNAS_SECRETAS.includes(c));
     const cols = [...new Set(visibles)].join(", ");
 
@@ -1269,9 +1238,6 @@ export function registerContactosRoutes(app: Express) {
     res.json({ descuento: updated });
   });
 
-  // ==================== Pipedrive: documentos + notas inline ====================
-
-  // Lista archivos del Drive bajo "Trámites Pipedrive / [Cliente]" agrupados por subcarpeta (trámite).
   // ══════════════════════════════════════════════════════════════════════════════════════════
   // LOS DOCUMENTOS DE UN CONTACTO, ORGANIZADOS POR NEGOCIACIÓN — T3 (reunión del 2026-08-24)
   //
@@ -1286,7 +1252,7 @@ export function registerContactosRoutes(app: Express) {
   // funcionaría para 266 contactos y devolvería vacío para los otros treinta y un mil — y
   // devolver vacío se lee como «este cliente no tiene documentos», que es mentira.
   //
-  // ⚠️ AUTORIZACIÓN: `requireAuth`, igual que los tres endpoints de importados que ya existen.
+  // ⚠️ AUTORIZACIÓN: `requireAuth`, como el resto de endpoints de este módulo.
   // Aquí solo viajan METADATOS (nombre, tipo, tamaño); los BYTES los sirve
   // `/api/drive/files/:id/raw`, que sí comprueba la ACL de la carpeta. No se estrena una regla
   // nueva en un endpoint de listado.
@@ -1374,123 +1340,6 @@ export function registerContactosRoutes(app: Express) {
     }
 
     res.json({ grupos, total: archivos.length });
-  });
-
-  app.get("/api/contactos/:id/pipedrive-files", requireAuth, async (req: Request, res: Response) => {
-    const id = String(req.params.id);
-    const c = (await query<any>(
-      `SELECT id, nombre_completo, pipedrive_person_id FROM gozz.contactos_cache WHERE id = $1`, [id]
-    ))[0];
-    if (!c) { res.status(404).json({ error: "Contacto no encontrado" }); return; }
-    if (!c.pipedrive_person_id) { res.json({ folders: [], total: 0, source: "none" }); return; }
-
-    // Carpeta del cliente bajo "Trámites Pipedrive"
-    const root = await query<any>(
-      `SELECT id FROM gozz.drive_folders
-        WHERE tipo='custom' AND nombre IN ('Tramites Pipedrive','Trámites Pipedrive') AND parent_id IS NULL OR
-              tipo='custom' AND nombre IN ('Tramites Pipedrive','Trámites Pipedrive') AND parent_id IN
-                (SELECT id FROM gozz.drive_folders WHERE tipo='root')
-        LIMIT 1`
-    );
-    if (!root[0]) { res.json({ folders: [], total: 0, source: "no-root" }); return; }
-
-    const cliente = await query<any>(
-      `SELECT id FROM gozz.drive_folders
-        WHERE parent_id = $1 AND nombre = $2 AND tipo='custom'
-        LIMIT 1`,
-      [root[0].id, c.nombre_completo]
-    );
-    if (!cliente[0]) { res.json({ folders: [], total: 0, source: "no-cliente" }); return; }
-
-    // Subcarpetas (trámites) + archivos en cada una
-    const subs = await query<any>(
-      `SELECT id, nombre FROM gozz.drive_folders WHERE parent_id = $1 ORDER BY nombre`,
-      [cliente[0].id]
-    );
-    const out = [];
-    let total = 0;
-    for (const s of subs) {
-      const files = await query<any>(
-        `SELECT id, nombre, mime, size_bytes, source, created_at
-           FROM gozz.drive_files WHERE folder_id = $1 AND deleted_at IS NULL ORDER BY nombre`,
-        [s.id]
-      );
-      total += files.length;
-      out.push({ folder_id: s.id, folder_nombre: s.nombre, files });
-    }
-    res.json({ folders: out, total, root_folder_id: cliente[0].id, source: "ok" });
-  });
-
-  // Lista archivos del Drive bajo "Tramites Zoho / [Cliente]" agrupados por subcarpeta (trámite). Espejo de pipedrive-files.
-  app.get("/api/contactos/:id/zoho-files", requireAuth, async (req: Request, res: Response) => {
-    const id = String(req.params.id);
-    const c = (await query<any>(
-      `SELECT id, nombre_completo, zoho_id FROM gozz.contactos_cache WHERE id = $1`, [id]
-    ))[0];
-    if (!c) { res.status(404).json({ error: "Contacto no encontrado" }); return; }
-    if (!c.zoho_id) { res.json({ folders: [], total: 0, source: "none" }); return; }
-
-    const root = await query<any>(
-      `SELECT id FROM gozz.drive_folders
-        WHERE nombre = 'Tramites Zoho'
-          AND (parent_id IS NULL OR parent_id IN (SELECT id FROM gozz.drive_folders WHERE tipo='root'))
-        LIMIT 1`
-    );
-    if (!root[0]) { res.json({ folders: [], total: 0, source: "no-root" }); return; }
-
-    const cliente = await query<any>(
-      `SELECT id FROM gozz.drive_folders WHERE parent_id = $1 AND nombre = $2 LIMIT 1`,
-      [root[0].id, c.nombre_completo]
-    );
-    if (!cliente[0]) { res.json({ folders: [], total: 0, source: "no-cliente" }); return; }
-
-    const subs = await query<any>(
-      `SELECT id, nombre FROM gozz.drive_folders WHERE parent_id = $1 ORDER BY nombre`,
-      [cliente[0].id]
-    );
-    const out = [];
-    let total = 0;
-    for (const s of subs) {
-      const files = await query<any>(
-        `SELECT id, nombre, mime, size_bytes, source, created_at
-           FROM gozz.drive_files WHERE folder_id = $1 AND deleted_at IS NULL ORDER BY nombre`,
-        [s.id]
-      );
-      total += files.length;
-      out.push({ folder_id: s.id, folder_nombre: s.nombre, files });
-    }
-    // archivos sueltos directamente en la carpeta del cliente (por si acaso)
-    const looseFiles = await query<any>(
-      `SELECT id, nombre, mime, size_bytes, source, created_at
-         FROM gozz.drive_files WHERE folder_id = $1 AND deleted_at IS NULL ORDER BY nombre`,
-      [cliente[0].id]
-    );
-    if (looseFiles.length) { total += looseFiles.length; out.unshift({ folder_id: cliente[0].id, folder_nombre: "(sin carpeta)", files: looseFiles }); }
-    res.json({ folders: out, total, root_folder_id: cliente[0].id, source: "ok" });
-  });
-
-  // Lista archivos importados desde Bitrix. Resuelve por bitrix_import_log → contacto_id (robusto al nombre de carpeta).
-  app.get("/api/contactos/:id/bitrix-files", requireAuth, async (req: Request, res: Response) => {
-    const id = String(req.params.id);
-    const c = (await query<any>(
-      `SELECT id, bitrix_contact_id FROM gozz.contactos_cache WHERE id = $1`, [id]
-    ))[0];
-    if (!c) { res.status(404).json({ error: "Contacto no encontrado" }); return; }
-    if (!c.bitrix_contact_id) { res.json({ folders: [], total: 0, source: "none" }); return; }
-    const files = await query<any>(
-      `SELECT df.id, df.nombre, df.mime, df.size_bytes, df.source, df.created_at, df.folder_id, fo.nombre AS folder_nombre
-         FROM gozz.drive_files df
-         JOIN gozz.drive_folders fo ON fo.id = df.folder_id
-        WHERE df.deleted_at IS NULL AND df.source LIKE 'bitrix:%'
-          AND df.source_id IN (SELECT bitrix_id::text FROM gozz.bitrix_import_log WHERE entity='file' AND contacto_id = $1)
-        ORDER BY fo.nombre, df.nombre`, [id]
-    );
-    const byFolder = new Map<string, any>();
-    for (const f of files) {
-      if (!byFolder.has(f.folder_id)) byFolder.set(f.folder_id, { folder_id: f.folder_id, folder_nombre: f.folder_nombre, files: [] });
-      byFolder.get(f.folder_id).files.push(f);
-    }
-    res.json({ folders: Array.from(byFolder.values()), total: files.length, source: "ok" });
   });
 
   // Notas del contacto.

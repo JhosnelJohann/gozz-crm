@@ -129,7 +129,7 @@ export function registerPhase6Routes(app: Express) {
       const rows = await query<any>(
         `UPDATE gozz.users SET ${updates.join(", ")} WHERE id = $1
          RETURNING id, email, nombre, nivel_acceso, activo, posiciones, telefono, telefono_personal,
-                   departamento, fecha_ingreso, cumpleanos, genero, bio, zona_horaria, foto_perfil_url, bitrix_id`,
+                   departamento, fecha_ingreso, cumpleanos, genero, bio, zona_horaria, foto_perfil_url`,
         [req.params.id, ...values]
       );
       res.json({ user: rows[0] });
@@ -169,7 +169,7 @@ export function registerPhase6Routes(app: Express) {
         `UPDATE gozz.users SET ${updates.join(", ")} WHERE id = $1
          RETURNING id, email, nombre, nivel_acceso, posiciones, foto_perfil_url, online, zona_horaria,
                    activo, ultimo_login, telefono, telefono_personal, departamento,
-                   fecha_ingreso, cumpleanos, genero, bio, importado_desde, bitrix_id`,
+                   fecha_ingreso, cumpleanos, genero, bio`,
         [u.sub, ...values]
       );
       res.json({ user: rows[0] });
@@ -217,7 +217,7 @@ export function registerPhase6Routes(app: Express) {
     const rows = await query<any>(
       `SELECT id, email, nombre, nivel_acceso, posiciones, foto_perfil_url, online, zona_horaria,
               activo, ultimo_login, created_at, telefono, telefono_personal, departamento,
-              fecha_ingreso, cumpleanos, genero, bio, importado_desde, bitrix_id
+              fecha_ingreso, cumpleanos, genero, bio
          FROM gozz.users WHERE id = $1`,
       [req.params.id]
     );

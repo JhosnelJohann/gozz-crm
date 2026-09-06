@@ -218,8 +218,7 @@ describe("🔴 lo que devuelven las proyecciones", () => {
   const SELECT_LISTA = `
     id, nombre_completo, email, telefono, whatsapp,
     tipo_cliente, estatus_migratorio, estatus_migratorio_tipo,
-    bitrix_contact_id, zoho_id, pipedrive_person_id,
-    pipedrive_tramites, zoho_tramites, revision_dedup_grupo,
+    revision_dedup_grupo,
     responsable_user_id, created_at,
     (SELECT u.nombre FROM gozz.users u WHERE u.id = contactos_cache.responsable_user_id) AS responsable_nombre`;
 

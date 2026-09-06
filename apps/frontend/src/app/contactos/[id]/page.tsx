@@ -189,24 +189,15 @@ export default function ContactoDetailPage() {
     if (!c) return;
     (async () => {
       try {
-        const reqs: Promise<any>[] = [
-          fetch(`/api/contactos/${id}/documentos`).then((r) => (r.ok ? r.json() : null)),
-        ];
-        if (c.pipedrive_person_id) reqs.push(fetch(`/api/contactos/${id}/pipedrive-files`).then((r) => r.ok ? r.json() : null));
-        if (c.zoho_id) reqs.push(fetch(`/api/contactos/${id}/zoho-files`).then((r) => r.ok ? r.json() : null));
-        if (c.bitrix_contact_id) reqs.push(fetch(`/api/contactos/${id}/bitrix-files`).then((r) => r.ok ? r.json() : null));
-        const [drive, ...importados] = await Promise.all(reqs);
+        const drive = await fetch(`/api/contactos/${id}/documentos`).then((r) => (r.ok ? r.json() : null));
 
-        // El Drive llega como `grupos`; los importados como `folders`. Se traducen a la MISMA
-        // forma que ya consume `aplanarDocumentos` en vez de enseñarle dos formatos.
-        const deDrive = (drive?.grupos || []).map((g: any) => ({
+        // El Drive llega como `grupos`; se traduce a la forma que consume `aplanarDocumentos`.
+        const folders = (drive?.grupos || []).map((g: any) => ({
           folder_id: g.oportunidad_id || g.folder_id || `grupo-${g.nombre}`,
           folder_nombre: g.tipo === "general" ? g.nombre : `Negociación · ${g.nombre}`,
           files: g.files || [],
         }));
-        const deImportados = importados.filter(Boolean).flatMap((r: any) => r.folders || []);
-        const folders = [...deDrive, ...deImportados];
-        const total = (drive?.total || 0) + importados.filter(Boolean).reduce((acc: number, r: any) => acc + (r.total || 0), 0);
+        const total = drive?.total || 0;
 
         setPdFiles({ folders, total, source: "ok" });
         const init: Record<string, boolean> = {};
@@ -289,30 +280,6 @@ export default function ContactoDetailPage() {
               <div className="inline-flex items-center gap-2 text-brand-orange font-ui uppercase text-[10px] tracking-[0.12em] mb-1">
                 <User className="h-3 w-3" strokeWidth={2} />
                 Contacto
-                {c.pipedrive_person_id && (
-                  <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-100 text-purple-700 text-[9px] font-bold uppercase tracking-wider">
-                    Pipedrive
-                  </span>
-                )}
-                {c.zoho_id && (
-                  <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700 text-[9px] font-bold uppercase tracking-wider">
-                    Zoho
-                  </span>
-                )}
-                {c.bitrix_contact_id && (
-                  <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-100 text-sky-700 text-[9px] font-bold uppercase tracking-wider">
-                    Bitrix
-                  </span>
-                )}
-                {([...(c.pipedrive_tramites || []), ...(c.zoho_tramites || [])] as string[]).map((t: string) => {
-                  const opt = ESTATUS_OPTS.find((o) => o.value === t);
-                  return (
-                    <span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-brand-orange/10 text-brand-orange text-[9px] font-bold uppercase tracking-wider">
-                      <Tag className="h-2.5 w-2.5" strokeWidth={2} />
-                      {opt?.label || t}
-                    </span>
-                  );
-                })}
               </div>
               {/* ════════════════════════════════════════════════════════════════════════════
                   EL NOMBRE ES UNA ETIQUETA, TAMBIEN EN EDICION
@@ -389,14 +356,12 @@ export default function ContactoDetailPage() {
         <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-2">
           {/* 🔴 T3 · «Hay unos contactos a los que les aparece el apartado de documentos y por
               qué otros no» (Juan Manuel, 2026-08-24). No era intermitente: la pestaña estaba
-              condicionada a que el contacto viniera de Pipedrive, Zoho o Bitrix, porque lo único
-              que sabía enseñar eran los archivos IMPORTADOS de esos tres orígenes. Un contacto
-              creado en el CRM no tenía dónde ver sus
-              documentos. Ahora la pestaña lee el Drive del contacto y sale SIEMPRE.
-              «Notas» sigue condicionada: eso sí depende de que haya un origen que las tenga. */}
-          {(((c.pipedrive_person_id || c.zoho_id || c.bitrix_contact_id)
-            ? ["resumen", "documentos", "notas", "negociaciones", "tareas", "referidos"]
-            : ["resumen", "documentos", "negociaciones", "tareas", "referidos"]) as Tab[]).map((t) => (
+              condicionada a que el contacto viniera de un CRM externo (Pipedrive/Zoho/Bitrix,
+              ya sin soporte), porque lo único que sabía enseñar eran los archivos IMPORTADOS de
+              esos orígenes. Un contacto creado en el CRM no tenía dónde ver sus documentos. Ahora
+              tanto "documentos" (lee el Drive del contacto) como "notas" (siempre locales) salen
+              SIEMPRE, para cualquier contacto. */}
+          {(["resumen", "documentos", "notas", "negociaciones", "tareas", "referidos"] as Tab[]).map((t) => (
             <button key={t} onClick={() => setTab(t)} className={cn("h-10 px-4 rounded-xl font-ui text-[11px] font-bold uppercase tracking-wider transition whitespace-nowrap", tab === t ? "gradient-orange text-white shadow-glow" : "bg-white text-neutral-500 hover:bg-neutral-50 border border-neutral-100")}>
               {t}
               {t === "documentos" && pdFiles?.total ? <span className="ml-1.5 text-[10px] opacity-80">({pdFiles.total})</span> : null}
@@ -409,63 +374,6 @@ export default function ContactoDetailPage() {
 
         {tab === "resumen" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {c.pipedrive_person_id && (
-              <Card icon={FolderOpen} title="Importado desde Pipedrive" accent="#8338EC" className="lg:col-span-2">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <p className="text-[12px] text-neutral-600">
-                    Pipedrive id <code className="text-[11px] bg-neutral-100 px-1.5 py-0.5 rounded">{c.pipedrive_person_id}</code>
-                    {c.pipedrive_imported_at && <> · importado el {new Date(c.pipedrive_imported_at).toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })}</>}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => setTab("documentos")} className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-purple-600 text-white font-ui text-[11px] font-bold uppercase tracking-wider hover:bg-purple-700 transition">
-                      <FolderOpen className="h-3.5 w-3.5" /> Documentos {pdFiles?.total ? `· ${pdFiles.total}` : ""}
-                    </button>
-                    <button onClick={() => setTab("notas")} className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-brand-orange text-white font-ui text-[11px] font-bold uppercase tracking-wider hover:bg-brand-orange/90 transition">
-                      <StickyNote className="h-3.5 w-3.5" /> Notas
-                    </button>
-                  </div>
-                </div>
-              </Card>
-            )}
-
-            {c.zoho_id && (
-              <Card icon={FolderOpen} title="Importado desde Zoho" accent="#10b981" className="lg:col-span-2">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <p className="text-[12px] text-neutral-600">
-                    Zoho {c.zoho_module || "Contacts"} id <code className="text-[11px] bg-neutral-100 px-1.5 py-0.5 rounded">{c.zoho_id}</code>
-                    {c.zoho_imported_at && <> · importado el {new Date(c.zoho_imported_at).toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })}</>}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => setTab("documentos")} className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-emerald-600 text-white font-ui text-[11px] font-bold uppercase tracking-wider hover:bg-emerald-700 transition">
-                      <FolderOpen className="h-3.5 w-3.5" /> Documentos {pdFiles?.total ? `· ${pdFiles.total}` : ""}
-                    </button>
-                    <button onClick={() => setTab("notas")} className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-brand-orange text-white font-ui text-[11px] font-bold uppercase tracking-wider hover:bg-brand-orange/90 transition">
-                      <StickyNote className="h-3.5 w-3.5" /> Notas
-                    </button>
-                  </div>
-                </div>
-              </Card>
-            )}
-
-            {c.bitrix_contact_id && (
-              <Card icon={FolderOpen} title="Importado desde Bitrix24" accent="#0ea5e9" className="lg:col-span-2">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <p className="text-[12px] text-neutral-600">
-                    Bitrix <code className="text-[11px] bg-neutral-100 px-1.5 py-0.5 rounded">{c.bitrix_contact_id}</code>
-                    {c.bitrix_imported_at && <> · importado el {new Date(c.bitrix_imported_at).toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })}</>}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => setTab("documentos")} className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-sky-600 text-white font-ui text-[11px] font-bold uppercase tracking-wider hover:bg-sky-700 transition">
-                      <FolderOpen className="h-3.5 w-3.5" /> Documentos {pdFiles?.total ? `· ${pdFiles.total}` : ""}
-                    </button>
-                    <button onClick={() => setTab("notas")} className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-brand-orange text-white font-ui text-[11px] font-bold uppercase tracking-wider hover:bg-brand-orange/90 transition">
-                      <StickyNote className="h-3.5 w-3.5" /> Notas
-                    </button>
-                  </div>
-                </div>
-              </Card>
-            )}
-
             <Card icon={User} title="Información personal">
               <Grid>
                 <Field label="Nombre" value={c.nombre} onChange={(v) => setForm({ ...form, nombre: v })} editing={editing} />
@@ -995,20 +903,12 @@ function NotasTab({ contactoId }: { contactoId: string }) {
         <ul className="space-y-3">
           {notes.map((n: any) => {
             const isLocal = n.source === "local";
-            const isImported = n.source === "pipedrive" || n.source === "zoho" || n.source === "bitrix";
             const body = String(n.contenido || "");
-            const lines = body.split("\n");
-            const headerMatch = (lines[0] || "").match(/^\[(?:Pipedrive|Zoho|Bitrix)\s*·?\s*(.*?)\]$/);
-            const rest = isImported ? lines.slice(1).join("\n").trim() : body;
-            const headerLabel = isImported && headerMatch ? (headerMatch[1] || "").trim() : null;
+            const rest = body;
             return (
               <li key={`${n.source}-${n.id}`} className="rounded-xl border border-neutral-100 p-4 group">
                 <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                   {isLocal && <span className="px-1.5 py-0.5 rounded-md bg-brand-orange/10 text-brand-orange text-[9px] font-ui font-bold uppercase tracking-wider shrink-0">CRM{n.user_nombre ? ` · ${n.user_nombre}` : ""}</span>}
-                  {n.source === "pipedrive" && <span className="px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-700 text-[9px] font-ui font-bold uppercase tracking-wider shrink-0">Pipedrive</span>}
-                  {n.source === "zoho" && <span className="px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-700 text-[9px] font-ui font-bold uppercase tracking-wider shrink-0">Zoho</span>}
-                  {n.source === "bitrix" && <span className="px-1.5 py-0.5 rounded-md bg-blue-100 text-blue-700 text-[9px] font-ui font-bold uppercase tracking-wider shrink-0">Bitrix</span>}
-                  {headerLabel && <span className="text-[10px] text-neutral-500 font-ui uppercase tracking-wider truncate">{headerLabel}</span>}
                   {n.created_at && <span className="ml-auto text-[10px] text-neutral-400 shrink-0">{new Date(n.created_at).toLocaleString("es-ES", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}
                   {isLocal && n.can_edit && editId !== n.id && (
                     <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition shrink-0">

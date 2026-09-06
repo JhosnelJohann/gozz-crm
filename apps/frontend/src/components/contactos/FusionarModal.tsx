@@ -50,8 +50,6 @@ const ETIQUETAS: Record<string, string> = {
   direccion_ciudad: "Ciudad", direccion_estado: "Estado", direccion_cp: "Código postal",
   direccion_pais: "País", correo_uscis: "Correo USCIS", usuario_uscis: "Usuario USCIS",
   clave_uscis_enc: "Clave USCIS", clave_correo_uscis_enc: "Clave del correo USCIS",
-  bitrix_contact_id: "ID Bitrix", pipedrive_person_id: "ID Pipedrive", zoho_id: "ID Zoho",
-  pipedrive_tramites: "Trámites Pipedrive", zoho_tramites: "Trámites Zoho", bitrix_tramites: "Trámites Bitrix",
   id: "ID interno", created_at: "Fecha de creación",
 };
 const eti = (c: string) => ETIQUETAS[c] || c.replace(/_/g, " ");

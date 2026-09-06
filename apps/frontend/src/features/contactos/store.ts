@@ -3,13 +3,11 @@
 // siendo estado local del componente que los pide, para no reinventar un caché de servidor.
 import { create } from "zustand";
 
-export type ContactosSource = "" | "pipedrive" | "zoho" | "bitrix" | "native";
 export type ContactosVista = "mosaico" | "lista";
 
 export interface ContactosFiltros {
   q: string;
   tramite: string;
-  source: ContactosSource;
   /** Candidatos a duplicado que el motor de dedup dejó marcados esperando revisión humana. */
   soloDuplicados: boolean;
   sinFechaNac: boolean;
@@ -42,7 +40,6 @@ interface ContactosUiState {
 const FILTROS_INICIALES: ContactosFiltros = {
   q: "",
   tramite: "",
-  source: "",
   soloDuplicados: false,
   sinFechaNac: false,
   responsable: "",

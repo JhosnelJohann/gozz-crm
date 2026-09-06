@@ -35,8 +35,6 @@ interface ProfileUser {
   cumpleanos: string | null;
   genero: string | null;
   bio: string | null;
-  importado_desde: string | null;
-  bitrix_id: number | null;
 }
 
 const TABS = [
@@ -258,10 +256,6 @@ export default function PerfilEquipoPage() {
                 <InfoRow label="Zona horaria" value={u.zona_horaria} />
                 <InfoRow label="Fecha de ingreso" value={formatDate(u.fecha_ingreso, { year: "numeric", month: "long", day: "numeric" })} />
                 <InfoRow label="Último acceso" value={u.ultimo_login ? new Date(u.ultimo_login).toLocaleString("es") : null} />
-                <InfoRow label="Origen" value={u.importado_desde === "bitrix24" ? "Bitrix24 (import)" : "Registro manual"} />
-                {current?.nivel === "super_admin" && u.bitrix_id && (
-                  <InfoRow label="Bitrix ID" value={String(u.bitrix_id)} />
-                )}
               </div>
             </div>
           </div>

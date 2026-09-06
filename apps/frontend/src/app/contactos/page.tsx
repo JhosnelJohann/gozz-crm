@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Search, Users, Mail, Phone, X, Filter, UserPlus, MoreVertical, Tag, LayoutGrid, List, Trash2, Edit3, GitMerge, UserCheck, UserX, CalendarOff } from "@/lib/bootstrap-icons";
+import { Plus, Search, Users, Mail, Phone, X, Filter, UserPlus, MoreVertical, LayoutGrid, List, Trash2, Edit3, GitMerge, UserCheck, UserX, CalendarOff } from "@/lib/bootstrap-icons";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { DateField } from "@/components/ui/DateField";
@@ -26,11 +26,6 @@ interface Contacto {
   estatus_migratorio: string | null;
   estatus_migratorio_tipo: string | null;
   tipo_cliente: string | null;
-  pipedrive_person_id: number | null;
-  pipedrive_tramites: string[] | null;
-  zoho_id: string | null;
-  zoho_tramites: string[] | null;
-  bitrix_contact_id: string | null;
   responsable_user_id: string | null;
   responsable_nombre: string | null;
   created_at: string;
@@ -78,7 +73,7 @@ export default function ContactosPage() {
   // ---- filtros (estado de UI en el store del slice; ver features/contactos/store.ts) ----
   const filtros = useContactosStore((s) => s.filtros);
   const setFiltroStore = useContactosStore((s) => s.setFiltro);
-  const { q, tramite, source, soloDuplicados, sinFechaNac, responsable } = filtros;
+  const { q, tramite, soloDuplicados, sinFechaNac, responsable } = filtros;
   function setFiltroCampo<K extends keyof ContactosFiltros>(campo: K) {
     return (valor: ContactosFiltros[K] | ((prev: ContactosFiltros[K]) => ContactosFiltros[K])) => {
       const next = typeof valor === "function" ? (valor as (prev: ContactosFiltros[K]) => ContactosFiltros[K])(filtros[campo]) : valor;
@@ -87,7 +82,6 @@ export default function ContactosPage() {
   }
   const setQ = setFiltroCampo("q");
   const setTramite = setFiltroCampo("tramite");
-  const setSource = setFiltroCampo("source");
   const setSoloDuplicados = setFiltroCampo("soloDuplicados");
   const setSinFechaNac = setFiltroCampo("sinFechaNac");
   const setResponsable = setFiltroCampo("responsable");
@@ -104,7 +98,7 @@ export default function ContactosPage() {
     if (inicial) setFiltroStore("responsable", inicial);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [facets, setFacets] = useState<{ tramites: TramiteFacet[]; sources: { pipedrive: number; zoho: number; bitrix: number; native: number } } | null>(null);
+  const [facets, setFacets] = useState<{ tramites: TramiteFacet[] } | null>(null);
 
   // ---- vista ----
   const [vista, setVista] = useState<"mosaico" | "lista">("mosaico");
@@ -158,7 +152,7 @@ export default function ContactosPage() {
     return () => clearTimeout(t);
   }, [q, limpiarSeleccion]);
 
-  useEffect(() => { setPage(1); limpiarSeleccion(); }, [tramite, source, pageSize, soloDuplicados, sinFechaNac, responsable, limpiarSeleccion]);
+  useEffect(() => { setPage(1); limpiarSeleccion(); }, [tramite, pageSize, soloDuplicados, sinFechaNac, responsable, limpiarSeleccion]);
 
   // Guard anti-carreras: si escribes rápido, la respuesta de una búsqueda vieja puede llegar
   // DESPUÉS de la nueva. El AbortController cancela la anterior y el flag descarta lo que llegue
@@ -177,7 +171,6 @@ export default function ContactosPage() {
         p.set("pageSize", String(pageSize));
         if (debouncedQ) p.set("q", debouncedQ);
         if (tramite) p.set("tramite", tramite);
-        if (source) p.set("source", source);
         if (soloDuplicados) p.set("revision_dedup", "1");
         if (sinFechaNac) p.set("sin_fecha_nacimiento", "1");
         if (responsable) p.set("responsable", responsable);
@@ -203,7 +196,7 @@ export default function ContactosPage() {
       }
     })();
     return () => { cancelado = true; ctrl.abort(); };
-  }, [page, pageSize, debouncedQ, tramite, source, soloDuplicados, sinFechaNac, responsable, recargar]);
+  }, [page, pageSize, debouncedQ, tramite, soloDuplicados, sinFechaNac, responsable, recargar]);
 
   useEffect(() => {
     (async () => {
@@ -232,7 +225,7 @@ export default function ContactosPage() {
   }, [items]);
 
   // ---- helpers de selección ----
-  const filtrosActuales = { q: debouncedQ || undefined, tramite: tramite || undefined, source: source || undefined, revision_dedup: soloDuplicados || undefined, sin_fecha_nacimiento: sinFechaNac || undefined, responsable: responsable || undefined };
+  const filtrosActuales = { q: debouncedQ || undefined, tramite: tramite || undefined, revision_dedup: soloDuplicados || undefined, sin_fecha_nacimiento: sinFechaNac || undefined, responsable: responsable || undefined };
   const estaSeleccionado = (id: string) => (modoTotal ? !excluidos.has(id) : seleccionados.has(id));
   const nSeleccionados = modoTotal ? Math.max(0, total - excluidos.size) : seleccionados.size;
   const idsPagina = (items || []).map((c) => c.id);
@@ -419,18 +412,6 @@ export default function ContactosPage() {
               </select>
             </div>
 
-            <div className="flex gap-2">
-              {(["", "pipedrive", "zoho", "bitrix", "native"] as const).map((s) => (
-                <button
-                  key={s || "all"}
-                  onClick={() => setSource(s)}
-                  className={`h-9 px-3 rounded-lg font-ui text-[11px] font-bold uppercase tracking-wider transition ${source === s ? "bg-brand-orange text-white shadow-glow" : "bg-white/80 border border-black/5 text-neutral-600 hover:bg-black/5"}`}
-                >
-                  {s === "" ? "Todos" : s === "pipedrive" ? `Pipedrive${facets ? ` · ${facets.sources.pipedrive}` : ""}` : s === "zoho" ? `Zoho${facets ? ` · ${facets.sources.zoho}` : ""}` : s === "bitrix" ? `Bitrix${facets ? ` · ${facets.sources.bitrix}` : ""}` : `CRM${facets ? ` · ${facets.sources.native}` : ""}`}
-                </button>
-              ))}
-            </div>
-
             {/* Bonus: los candidatos que el motor automático NO fusionó por tener nombres
                 distintos y dejó marcados. Al activarlo la lista se ordena POR GRUPO, así los que
                 hay que comparar salen juntos. */}
@@ -510,8 +491,8 @@ export default function ContactosPage() {
               </button>
             )}
 
-            {(tramite || source || soloDuplicados || responsable) && (
-              <button onClick={() => { setTramite(""); setSource(""); setSoloDuplicados(false); setResponsable(""); }} className="h-9 px-3 rounded-lg text-xs font-ui font-bold uppercase tracking-wider text-neutral-500 hover:text-neutral-800 transition">
+            {(tramite || soloDuplicados || responsable) && (
+              <button onClick={() => { setTramite(""); setSoloDuplicados(false); setResponsable(""); }} className="h-9 px-3 rounded-lg text-xs font-ui font-bold uppercase tracking-wider text-neutral-500 hover:text-neutral-800 transition">
                 <X className="inline h-3 w-3 mr-1" strokeWidth={2} />
                 Limpiar
               </button>
@@ -527,9 +508,9 @@ export default function ContactosPage() {
               <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-brand-orange/10 mb-4">
                 <Users className="h-8 w-8 text-brand-orange" strokeWidth={1.5} />
               </div>
-              <h3 className="font-display text-xl font-black mb-2">{debouncedQ || tramite || source ? "Ningún contacto coincide" : "Aún no hay contactos"}</h3>
-              <p className="text-neutral-500 text-sm mb-5">{debouncedQ || tramite || source ? "Prueba con otra búsqueda o quita los filtros" : "Crea el primero para empezar"}</p>
-              {!(debouncedQ || tramite || source) && (
+              <h3 className="font-display text-xl font-black mb-2">{debouncedQ || tramite ? "Ningún contacto coincide" : "Aún no hay contactos"}</h3>
+              <p className="text-neutral-500 text-sm mb-5">{debouncedQ || tramite ? "Prueba con otra búsqueda o quita los filtros" : "Crea el primero para empezar"}</p>
+              {!(debouncedQ || tramite) && (
                 <button onClick={() => setModal(true)} className="gradient-orange inline-flex items-center gap-2 h-10 px-5 rounded-xl font-ui text-xs font-bold uppercase tracking-wider text-white shadow-glow">
                   <UserPlus className="h-4 w-4" strokeWidth={2} />
                   Crear primero
@@ -557,7 +538,6 @@ export default function ContactosPage() {
                       <th className="px-3 py-3">Teléfono</th>
                       <th className="px-3 py-3">Estatus</th>
                       <th className="px-3 py-3">Responsable</th>
-                      <th className="px-3 py-3">Origen</th>
                       {soloDuplicados && <th className="px-3 py-3">Grupo detectado</th>}
                     </tr>
                   </thead>
@@ -592,13 +572,6 @@ export default function ContactosPage() {
                             {c.responsable_nombre
                               ? <span className={cn(c.responsable_user_id === user?.id && "font-semibold text-brand-orange")}>{c.responsable_nombre}</span>
                               : <span className="text-[11px] italic text-neutral-400">sin responsable</span>}
-                          </td>
-                          <td className="px-3 py-3">
-                            <div className="flex flex-wrap gap-1">
-                              {c.pipedrive_person_id && <span className="px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-700 text-[10px] font-ui font-bold uppercase">PD</span>}
-                              {c.zoho_id && <span className="px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-700 text-[10px] font-ui font-bold uppercase">Zoho</span>}
-                              {c.bitrix_contact_id && <span className="px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-700 text-[10px] font-ui font-bold uppercase">Bitrix</span>}
-                            </div>
                           </td>
                           {soloDuplicados && (
                             <td className="px-3 py-3">
@@ -653,38 +626,6 @@ export default function ContactosPage() {
                           <MoreVertical className="h-4 w-4 text-neutral-400" strokeWidth={1.5} />
                         </button>
                       </div>
-
-                      {(c.pipedrive_person_id || c.zoho_id || c.bitrix_contact_id || (c.pipedrive_tramites && c.pipedrive_tramites.length > 0) || (c.zoho_tramites && c.zoho_tramites.length > 0)) && (
-                        <div className="flex flex-wrap gap-1 mb-2">
-                          {c.pipedrive_person_id && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-100 text-purple-700 text-[10px] font-ui font-bold uppercase tracking-wider">
-                              Pipedrive
-                            </span>
-                          )}
-                          {c.zoho_id && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700 text-[10px] font-ui font-bold uppercase tracking-wider">
-                              Zoho
-                            </span>
-                          )}
-                          {c.bitrix_contact_id && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-100 text-sky-700 text-[10px] font-ui font-bold uppercase tracking-wider">
-                              Bitrix
-                            </span>
-                          )}
-                          {(c.pipedrive_tramites || []).map((t) => (
-                            <span key={`pd-${t}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-brand-orange/10 text-brand-orange text-[10px] font-ui font-bold uppercase tracking-wider">
-                              <Tag className="h-2.5 w-2.5" strokeWidth={2} />
-                              {tramiteLabel(t)}
-                            </span>
-                          ))}
-                          {(c.zoho_tramites || []).map((t) => (
-                            <span key={`zo-${t}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-brand-orange/10 text-brand-orange text-[10px] font-ui font-bold uppercase tracking-wider">
-                              <Tag className="h-2.5 w-2.5" strokeWidth={2} />
-                              {tramiteLabel(t)}
-                            </span>
-                          ))}
-                        </div>
-                      )}
 
                       <div className="space-y-1 text-xs text-neutral-600">
                         {c.email && (
