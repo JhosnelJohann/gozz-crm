@@ -65,14 +65,22 @@ export function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
             <List className="h-5 w-5" weight="bold" />
           </button>
 
-          {/* Command palette trigger */}
+          {/* Command palette trigger — icono solo en móvil (la barra ancha no cabe junto al resto
+              de controles), caja completa desde `sm` en adelante. */}
           <button
             onClick={() => setCmdOpen(true)}
-            className="flex items-center gap-3 flex-1 max-w-md h-10 px-3 sm:px-4 rounded-xl bg-bg-surface-2 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:border-brand-primary/30 dark:hover:border-brand-primary/40 transition-all group"
+            aria-label="Buscar o ejecutar comando"
+            className="sm:hidden shrink-0 h-10 w-10 flex items-center justify-center rounded-xl bg-bg-surface-2 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:border-brand-primary/30 transition-all"
+          >
+            <MagnifyingGlass className="h-4 w-4 text-neutral-400" />
+          </button>
+          <button
+            onClick={() => setCmdOpen(true)}
+            className="hidden sm:flex items-center gap-3 flex-1 max-w-md h-10 px-4 rounded-xl bg-bg-surface-2 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:border-brand-primary/30 dark:hover:border-brand-primary/40 transition-all group"
           >
             <MagnifyingGlass className="h-4 w-4 text-neutral-400 group-hover:text-brand-primary transition-colors shrink-0" />
-            <span className="text-sm text-neutral-400 flex-1 text-left truncate"><span className="sm:hidden">Buscar…</span><span className="hidden sm:inline">Buscar o ejecutar comando…</span></span>
-            <div className="hidden sm:flex items-center gap-1 text-[10px] font-semibold text-neutral-400 bg-black/5 dark:bg-white/5 rounded px-1.5 py-0.5">
+            <span className="text-sm text-neutral-400 flex-1 text-left truncate">Buscar o ejecutar comando…</span>
+            <div className="flex items-center gap-1 text-[10px] font-semibold text-neutral-400 bg-black/5 dark:bg-white/5 rounded px-1.5 py-0.5">
               <CommandIcon className="h-2.5 w-2.5" weight="bold" />
               K
             </div>

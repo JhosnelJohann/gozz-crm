@@ -683,23 +683,26 @@ html.dark .doc-prose hr { border-color: rgba(255, 255, 255, 0.10); }
 /* ========== CHAT BACKGROUND (imagen de fondo al 20%) ========== */
 /* Truco: overlay del color base al 80% sobre la imagen → la imagen luce al 20%.
    Aplicado vía background-image multi-capa (no opacity, para no afectar a los hijos). */
+/* Mosaico repetido a tamaño fijo (como el wallpaper de WhatsApp), no "cover" — con "cover" una
+   sola imagen se estiraba/hacía zoom de forma distinta según el alto:ancho del contenedor, y en
+   un teléfono (angosto y alto) se veía como un remolino gigante en vez de una textura sutil. */
 .chat-bg {
   background-color: #efeae2;
   background-image:
-    linear-gradient(rgba(239, 234, 226, 0.80), rgba(239, 234, 226, 0.80)),
+    linear-gradient(rgba(239, 234, 226, 0.86), rgba(239, 234, 226, 0.86)),
     url("/chat-bg.jpg");
-  background-size: cover, cover;
+  background-size: auto, 420px;
   background-position: center, center;
-  background-repeat: no-repeat, no-repeat;
+  background-repeat: no-repeat, repeat;
 }
 html.dark .chat-bg {
   background-color: #0b141a;
   background-image:
-    linear-gradient(rgba(11, 20, 26, 0.80), rgba(11, 20, 26, 0.80)),
+    linear-gradient(rgba(11, 20, 26, 0.86), rgba(11, 20, 26, 0.86)),
     url("/chat-bg.jpg");
-  background-size: cover, cover;
+  background-size: auto, 420px;
   background-position: center, center;
-  background-repeat: no-repeat, no-repeat;
+  background-repeat: no-repeat, repeat;
 }
 
 

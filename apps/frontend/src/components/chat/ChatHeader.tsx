@@ -378,20 +378,21 @@ export function ChatHeader({ grupo, typingNames, onBack }: Props) {
               onClick={() => { if (tareaInfo?.tarea_id) router.push(`/tareas?id=${tareaInfo.tarea_id}`); }}
               disabled={!tareaInfo?.tarea_id}
               title="Ver la tarea en /tareas"
-              className="h-10 px-4 rounded-full border border-neutral-200 dark:border-white/10 text-neutral-700 dark:text-neutral-200 text-xs font-ui font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-neutral-50 dark:hover:bg-white/5 transition active:scale-95 disabled:opacity-50"
+              className="h-10 px-2.5 sm:px-4 rounded-full border border-neutral-200 dark:border-white/10 text-neutral-700 dark:text-neutral-200 text-xs font-ui font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-neutral-50 dark:hover:bg-white/5 transition active:scale-95 disabled:opacity-50 shrink-0"
             >
               <CheckSquare className="h-4 w-4" strokeWidth={2.5} />
-              Ver tarea
+              <span className="hidden sm:inline">Ver tarea</span>
             </button>
           </div>
         ) : (
           <button
             onClick={startDirectCall}
             disabled={starting}
-            className="h-10 px-4 rounded-full bg-gradient-to-r from-brand-orange to-neon-magenta text-white text-xs font-ui font-bold uppercase tracking-wider flex items-center gap-2 shadow hover:scale-[1.03] transition active:scale-95 disabled:opacity-60"
+            title="Videollamada"
+            className="h-10 px-2.5 sm:px-4 rounded-full bg-gradient-to-r from-brand-orange to-neon-magenta text-white text-xs font-ui font-bold uppercase tracking-wider flex items-center gap-2 shadow hover:scale-[1.03] transition active:scale-95 disabled:opacity-60 shrink-0"
           >
             <Video className="h-4 w-4" strokeWidth={2.5} />
-            Videollamada
+            <span className="hidden sm:inline">Videollamada</span>
           </button>
         )}
         {!isDM && grupo.tipo !== "copilot" && (

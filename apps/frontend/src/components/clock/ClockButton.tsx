@@ -90,16 +90,18 @@ export function ClockButton() {
     <div className="relative">
       <button
         onClick={() => setMenuOpen(!menuOpen)}
-        className={`flex items-center gap-2 h-10 px-3 rounded-xl border transition ${
+        className={`flex items-center gap-2 h-10 px-2.5 sm:px-3 rounded-xl border transition ${
           breakExcedido ? "bg-red-500 border-red-500 text-white animate-pulse" :
           breaking ? "bg-yellow-400/15 border-yellow-400/40 text-yellow-700 dark:text-yellow-300" :
           active ? "bg-brand-green/15 border-brand-green/30 text-brand-green" :
-          "bg-white/60 dark:bg-white/[0.03] border-black/5 dark:border-white/10 hover:bg-white"
+          "bg-bg-surface-2 dark:bg-white/[0.04] border-black/5 dark:border-white/10 hover:bg-white"
         }`}
         title={active ? "Jornada activa" : "Clock in"}
       >
         {breakExcedido ? <AlertTriangle className="h-4 w-4" /> : breaking ? <Coffee className="h-4 w-4" /> : active ? <Clock className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-        <span className="text-[11px] font-ui uppercase tracking-wider font-bold whitespace-nowrap tabular-nums">
+        {/* En móvil el botón se queda solo-ícono — el Topbar ya va apretado con hamburguesa +
+            buscador + campana + tema + avatar en el mismo ancho de un teléfono. */}
+        <span className="hidden sm:inline text-[11px] font-ui uppercase tracking-wider font-bold whitespace-nowrap tabular-nums">
           {breaking ? `Break ${fmtDur(breakMin)}${breakExcedido ? " ⚠" : ""}` :
            active ? fmtDur(workedMin) :
            "Clock in"}

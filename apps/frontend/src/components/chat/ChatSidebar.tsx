@@ -229,7 +229,7 @@ export function ChatSidebar({ grupos, activeId, onSelect, onNewChatAction, onSta
           onClick={() => onSelect(g.id)}
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(g.id); } }}
           className={cn(
-            "w-full px-3 py-3 flex items-center gap-3 text-left border-l-[3px] glass-sidebar-item cursor-pointer",
+            "w-full pl-3 pr-4 py-3 flex items-center gap-3 text-left border-l-[3px] glass-sidebar-item cursor-pointer",
             isActive ? "glass-sidebar-item-active"
               : g.fijado ? "bg-amber-500/[0.06] border-transparent"
               : "border-transparent"
