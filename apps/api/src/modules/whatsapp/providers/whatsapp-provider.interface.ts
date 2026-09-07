@@ -28,6 +28,10 @@ export interface WhatsAppIncomingMessage {
   /** URL pública de la foto de perfil de WhatsApp, cuando se pudo resolver (privacidad permite y
    * no hubo error de red) — null si no se pudo, undefined si ni se intentó. */
   fotoPerfilUrl?: string | null;
+  /** El número real (`...@s.whatsapp.net`) detrás de un `jid` que llegó como `@lid`, cuando el
+   * directorio de contactos de WhatsApp ya lo reveló — null/undefined si `jid` ya es un número
+   * real o si WhatsApp todavía no lo comparte. */
+  jidReal?: string | null;
 }
 
 export interface WhatsAppConnectionUpdate {
@@ -50,4 +54,10 @@ export interface WhatsAppProvider {
    * tiene) — la resolución automática solo ocurre cuando llega o sale un mensaje nuevo, así que
    * una conversación vieja sin actividad reciente se quedaría sin foto para siempre sin esto. */
   resolverFotoPerfil(conexionId: string, jid: string): Promise<string | null>;
+  /** WhatsApp sincroniza su directorio de contactos (nombre guardado en el teléfono, y a veces el
+   * número real detrás de un `@lid`) de forma asíncrona, no bajo pedido — puede llegar mucho
+   * después de que una conversación ya existe. Esto avisa cuando eso pasa, para poder corregir una
+   * conversación que se creó con un nombre o número peor (p.ej. sin dato, o el del propio dueño de
+   * la conexión si el primer mensaje del hilo lo mandó él desde el teléfono). */
+  onContactoResuelto(cb: (conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }) => void): void;
 }

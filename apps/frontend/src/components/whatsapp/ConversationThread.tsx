@@ -241,7 +241,7 @@ export function ConversationThread({
           <WhatsAppAvatar fotoUrl={conversacion.foto_perfil_url} nombre={conversacion.nombre_whatsapp || conversacion.wa_jid} size={36} />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold truncate">{conversacion.nombre_whatsapp || conversacion.wa_jid.split("@")[0]}</div>
-            <div className="text-[10px] text-neutral-500 truncate">{numeroConBandera(conversacion.wa_jid)}</div>
+            <div className="text-[10px] text-neutral-500 truncate">{numeroConBandera(conversacion.telefono_real || conversacion.wa_jid)}</div>
           </div>
         </button>
         <TagPicker todas={tags} activas={conversacion.tags} onToggle={onToggleTag} onCrear={onCrearTag} />

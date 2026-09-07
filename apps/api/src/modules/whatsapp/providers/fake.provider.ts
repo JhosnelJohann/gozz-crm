@@ -15,6 +15,7 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
   private stateCbs: ((conexionId: string, update: WhatsAppConnectionUpdate) => void)[] = [];
   private msgCbs: ((conexionId: string, msg: WhatsAppIncomingMessage) => void)[] = [];
   private statusCbs: ((conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void)[] = [];
+  private contactoCbs: ((conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }) => void)[] = [];
   public sent: { conexionId: string; msg: WhatsAppOutgoingMessage }[] = [];
   private connected = new Set<string>();
   public fotosPerfil = new Map<string, string | null>();
@@ -48,6 +49,9 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
   async resolverFotoPerfil(_conexionId: string, jid: string): Promise<string | null> {
     return this.fotosPerfil.get(jid) ?? null;
   }
+  onContactoResuelto(cb: (conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }) => void): void {
+    this.contactoCbs.push(cb);
+  }
 
   // ---- Solo para pruebas / smoke manual local ----
   simulateQr(conexionId: string, qr = "fake-qr-payload"): void {
@@ -65,5 +69,8 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
   }
   simulateStatusUpdate(conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado): void {
     this.statusCbs.forEach((cb) => cb(conexionId, waMessageId, estado));
+  }
+  simulateContactoResuelto(conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }): void {
+    this.contactoCbs.forEach((cb) => cb(conexionId, jid, info));
   }
 }

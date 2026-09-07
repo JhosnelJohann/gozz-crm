@@ -67,10 +67,38 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
   private stateCbs: ((conexionId: string, update: WhatsAppConnectionUpdate) => void)[] = [];
   private msgCbs: ((conexionId: string, msg: WhatsAppIncomingMessage) => void)[] = [];
   private statusCbs: ((conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void)[] = [];
+  private contactoCbs: ((conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }) => void)[] = [];
   /** Evita pedir la foto de perfil por cada mensaje del mismo jid — se resuelve una sola vez por
    * proceso (si falla o el usuario tiene la foto privada, se cachea `null` igual: reintentar en
    * cada mensaje entrante no vale la pena). */
   private fotoPerfilCache = new Map<string, string | null>();
+  /** Directorio de contactos por conexión: mapea tanto el `@lid` como el número real de un
+   * contacto a su nombre guardado en el teléfono y al número real (cuando WhatsApp lo revela vía
+   * `contacts.*`/`chats.phoneNumberShare`). Ni Baileys ni WhatsApp garantizan esto por adelantado
+   * ni bajo pedido — llega solo, de forma asíncrona, cuando llega. */
+  private contactDirs = new Map<string, Map<string, { jidReal?: string; nombre?: string }>>();
+
+  private dirDe(conexionId: string): Map<string, { jidReal?: string; nombre?: string }> {
+    let dir = this.contactDirs.get(conexionId);
+    if (!dir) { dir = new Map(); this.contactDirs.set(conexionId, dir); }
+    return dir;
+  }
+
+  private registrarContacto(conexionId: string, c: { id?: string; lid?: string; name?: string; notify?: string }): void {
+    if (!c.id && !c.lid) return;
+    const dir = this.dirDe(conexionId);
+    const nombre = c.name || c.notify || undefined;
+    if (c.lid) {
+      const previo = dir.get(c.lid) || {};
+      const info = { jidReal: c.id ?? previo.jidReal, nombre: nombre ?? previo.nombre };
+      dir.set(c.lid, info);
+      if (info.jidReal || info.nombre) this.contactoCbs.forEach((cb) => cb(conexionId, c.lid!, info));
+    }
+    if (c.id) {
+      const previo = dir.get(c.id) || {};
+      dir.set(c.id, { jidReal: previo.jidReal, nombre: nombre ?? previo.nombre });
+    }
+  }
 
   async connect(conexionId: string): Promise<void> {
     if (this.sockets.has(conexionId)) return;
@@ -134,6 +162,20 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
         if (waMessageId && estado) this.statusCbs.forEach((cb) => cb(conexionId, waMessageId, estado));
       }
     });
+
+    // Directorio de contactos: el nombre que el dueño de la conexión tiene guardado para ese
+    // contacto en su teléfono (más confiable que el "pushName" que el propio contacto se puso), y
+    // el número real detrás de un `@lid` cuando WhatsApp llega a compartirlo. Ninguno de estos
+    // eventos es pedible bajo demanda — llegan solos, en cualquier momento tras conectar.
+    const onContactos = (cs: { id?: string; lid?: string; name?: string; notify?: string }[]) => {
+      cs.forEach((c) => this.registrarContacto(conexionId, c));
+    };
+    sock.ev.on("contacts.upsert", onContactos);
+    sock.ev.on("contacts.update", onContactos);
+    sock.ev.on("messaging-history.set", ({ contacts }) => { if (contacts) onContactos(contacts); });
+    sock.ev.on("chats.phoneNumberShare", ({ lid, jid }) => {
+      this.registrarContacto(conexionId, { lid, id: jid });
+    });
   }
 
   private async fetchFotoPerfil(sock: WASocket, jid: string): Promise<string | null> {
@@ -185,13 +227,23 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
     }
 
     const fotoPerfilUrl = await this.fetchFotoPerfil(sock, jid);
+    const fromMe = !!msg.key.fromMe;
+    const contacto = this.dirDe(conexionId).get(jid);
+    // OJO: `msg.pushName` en un mensaje `fromMe` es el nombre de la CUENTA CONECTADA (el vendedor),
+    // no el del contacto — usarlo aquí sin este chequeo fue el bug que nombraba conversaciones con
+    // el propio nombre del dueño de la conexión cuando el primer mensaje del hilo lo mandó él desde
+    // el teléfono, antes de que el contacto respondiera. El directorio de contactos (nombre
+    // guardado en el teléfono) es siempre más confiable que cualquiera de los dos pushName cuando
+    // está disponible.
+    const nombrePerfil = contacto?.nombre || (!fromMe ? msg.pushName || null : null) || null;
 
     this.msgCbs.forEach((cb) => cb(conexionId, {
       jid, waMessageId, tipo, contenido, archivoUrl, archivoNombre, archivoTipo,
       timestamp: new Date((Number(msg.messageTimestamp) || Date.now() / 1000) * 1000),
-      nombrePerfil: msg.pushName || null,
-      fromMe: !!msg.key.fromMe,
+      nombrePerfil,
+      fromMe,
       fotoPerfilUrl,
+      jidReal: contacto?.jidReal ?? null,
     }));
   }
 
@@ -231,4 +283,5 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
   onConnectionUpdate(cb: (conexionId: string, update: WhatsAppConnectionUpdate) => void): void { this.stateCbs.push(cb); }
   onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void): void { this.msgCbs.push(cb); }
   onMessageStatusUpdate(cb: (conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void): void { this.statusCbs.push(cb); }
+  onContactoResuelto(cb: (conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }) => void): void { this.contactoCbs.push(cb); }
 }

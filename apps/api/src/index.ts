@@ -183,6 +183,7 @@ async function startWhatsAppNotifyListener() {
           : payload.tipo === "estado" ? "whatsapp:estado"
           : payload.tipo === "mensaje" ? "whatsapp:mensaje"
           : payload.tipo === "foto_perfil" ? "whatsapp:foto-perfil"
+          : payload.tipo === "contacto_resuelto" ? "whatsapp:contacto-resuelto"
           : "whatsapp:mensaje-estado";
         for (const uid of userIds) emitToUser(uid, event, payload);
       } catch (e: any) {

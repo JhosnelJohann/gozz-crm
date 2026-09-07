@@ -117,6 +117,31 @@ describe("WhatsApp — mensajes entrantes", () => {
     const salientes = mensajes.filter((m) => m.wa_message_id === "WA-out-1");
     expect(salientes).toHaveLength(1);
   });
+
+  it("🔴 si el primer mensaje del hilo es fromMe, su nombrePerfil (el del dueño de la conexión) NO nombra la conversación", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52178${sufijo().replace(/\D/g, "").padEnd(7, "2").slice(0, 7)}@s.whatsapp.net`;
+
+    // El vendedor le escribió primero desde su teléfono, fuera de GOZZ — Baileys sincroniza ese
+    // mensaje como fromMe, con pushName = el nombre de la CUENTA CONECTADA, no el del contacto.
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-out-${sufijo()}`, tipo: "texto", contenido: "Hola, te escribo por tu pedido",
+      timestamp: new Date(), fromMe: true, nombrePerfil: "Jhosnel",
+    } as any);
+
+    let conv = await repo.getConversacionPorJid(conexion.id, jid);
+    expect(conv?.nombre_whatsapp).toBeNull();
+
+    // Cuando el contacto responde de verdad (fromMe: false), su nombre sí se completa.
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-in-${sufijo()}`, tipo: "texto", contenido: "Hola, sí, quiero el azul",
+      timestamp: new Date(), fromMe: false, nombrePerfil: "Cliente Real",
+    } as any);
+
+    conv = await repo.getConversacionPorJid(conexion.id, jid);
+    expect(conv?.nombre_whatsapp).toBe("Cliente Real");
+  });
 });
 
 describe("WhatsApp — ticks de entrega y leído", () => {
@@ -206,6 +231,51 @@ describe("WhatsApp — foto de perfil", () => {
     await service.registrarFotoPerfilResuelta(conv!.id, "https://pps.whatsapp.net/tardia.jpg");
     const actualizada = await repo.getConversacion(conv!.id);
     expect(actualizada?.foto_perfil_url).toBe("https://pps.whatsapp.net/tardia.jpg");
+  });
+});
+
+describe("WhatsApp — directorio de contactos (nombre guardado y número real detrás de un @lid)", () => {
+  it("registrarContactoResuelto completa el nombre y el número real que faltaban", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const lid = `${sufijo().replace(/\D/g, "").padEnd(15, "9").slice(0, 15)}@lid`;
+    // Un @lid nunca trae nombrePerfil de sobra ni jidReal la primera vez — eso es justo lo que
+    // este directorio resuelve más tarde, cuando WhatsApp lo comparte.
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid: lid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+    } as any);
+    let conv = await repo.getConversacionPorJid(conexion.id, lid);
+    expect(conv?.nombre_whatsapp).toBeNull();
+    expect(conv?.telefono_real).toBeNull();
+
+    await service.registrarContactoResuelto(conexion.id, lid, { nombre: "Contacto Real", jidReal: "584121000000@s.whatsapp.net" });
+
+    conv = await repo.getConversacionPorJid(conexion.id, lid);
+    expect(conv?.nombre_whatsapp).toBe("Contacto Real");
+    expect(conv?.telefono_real).toBe("584121000000@s.whatsapp.net");
+  });
+
+  it("no pisa un nombre o número que ya se hubieran resuelto antes", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const lid = `${sufijo().replace(/\D/g, "").padEnd(15, "3").slice(0, 15)}@lid`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid: lid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+      nombrePerfil: "Ya Resuelto",
+    } as any);
+
+    await service.registrarContactoResuelto(conexion.id, lid, { nombre: "Otro nombre distinto" });
+
+    const conv = await repo.getConversacionPorJid(conexion.id, lid);
+    expect(conv?.nombre_whatsapp).toBe("Ya Resuelto");
+  });
+
+  it("una conversación que no existe para esa conexión/jid no revienta", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    await expect(
+      service.registrarContactoResuelto(conexion.id, "000000000000000@lid", { nombre: "Nadie" })
+    ).resolves.toBeUndefined();
   });
 });
 

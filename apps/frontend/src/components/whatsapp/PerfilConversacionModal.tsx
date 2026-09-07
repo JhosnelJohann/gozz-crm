@@ -22,7 +22,7 @@ const VINCULO_LABEL: Record<WhatsAppConversacionDetalle["contacto_vinculo_estado
 
 export function PerfilConversacionModal({ conversacion, onClose, onVincular, onConvertir }: Props) {
   const nombre = conversacion.nombre_whatsapp || conversacion.wa_jid.split("@")[0];
-  const { texto: numero, bandera } = formatearNumeroWhatsApp(conversacion.wa_jid);
+  const { texto: numero, bandera } = formatearNumeroWhatsApp(conversacion.telefono_real || conversacion.wa_jid);
   return (
     <AnimatedModal onClose={onClose} panelClassName="w-full max-w-sm glass-panel rounded-2xl overflow-hidden">
       <div className="p-5 border-b border-black/5 dark:border-white/10 flex items-center gap-3">

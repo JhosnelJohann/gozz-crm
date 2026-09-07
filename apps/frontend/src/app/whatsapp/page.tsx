@@ -177,15 +177,24 @@ export default function WhatsAppPage() {
       }
       setConversaciones((cur) => cur ? cur.map((c) => c.id === ev.conversacion_id ? { ...c, foto_perfil_url: ev.foto_perfil_url } : c) : cur);
     };
+    // El directorio de contactos de WhatsApp llega solo, no bajo pedido — puede corregir el
+    // nombre o el número real de una conversación que ya está abierta o en la lista, mucho después
+    // de haberse creado. El aviso solo trae el id, así que se refresca lo que haga falta.
+    const onContactoResuelto = (ev: any) => {
+      if (ev.conversacion_id === activeConversacionIdRef.current) loadConversacionDetalle(ev.conversacion_id);
+      loadConversacionesRef.current({ silent: true });
+    };
     socket.on("whatsapp:estado", onEstado);
     socket.on("whatsapp:mensaje", onMensaje);
     socket.on("whatsapp:mensaje-estado", onMensajeEstado);
     socket.on("whatsapp:foto-perfil", onFotoPerfil);
+    socket.on("whatsapp:contacto-resuelto", onContactoResuelto);
     return () => {
       socket.off("whatsapp:estado", onEstado);
       socket.off("whatsapp:mensaje", onMensaje);
       socket.off("whatsapp:mensaje-estado", onMensajeEstado);
       socket.off("whatsapp:foto-perfil", onFotoPerfil);
+      socket.off("whatsapp:contacto-resuelto", onContactoResuelto);
     };
   }, []);
 
@@ -353,8 +362,8 @@ export default function WhatsAppPage() {
           onVinculado={vincularContacto}
           nombreSugerido={activeConversacion.nombre_whatsapp || undefined}
           telefonoSugerido={(() => {
-            const { texto, bandera } = formatearNumeroWhatsApp(activeConversacion.wa_jid);
-            return bandera ? texto : ""; // sin bandera = @lid, no hay número real que precargar
+            const { texto, bandera } = formatearNumeroWhatsApp(activeConversacion.telefono_real || activeConversacion.wa_jid);
+            return bandera ? texto : ""; // sin bandera = no hay número real que precargar
           })()}
         />
       )}

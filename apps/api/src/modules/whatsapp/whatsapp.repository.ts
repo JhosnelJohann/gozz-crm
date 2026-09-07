@@ -224,6 +224,7 @@ export interface NuevaConversacion {
   jid: string;
   nombreWhatsapp?: string | null;
   fotoPerfilUrl?: string | null;
+  telefonoReal?: string | null;
   etapaId: string;
   contactoId?: string | null;
   contactoVinculoEstado?: string;
@@ -232,11 +233,11 @@ export interface NuevaConversacion {
 export async function crearConversacion(d: NuevaConversacion): Promise<WhatsAppConversacion> {
   const rows = await query<WhatsAppConversacion>(
     `INSERT INTO gozz.whatsapp_conversaciones
-       (conexion_id, wa_jid, nombre_whatsapp, foto_perfil_url, etapa_id, contacto_id, contacto_vinculo_estado)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (conexion_id, wa_jid, nombre_whatsapp, foto_perfil_url, telefono_real, etapa_id, contacto_id, contacto_vinculo_estado)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (conexion_id, wa_jid) DO UPDATE SET nombre_whatsapp = COALESCE(EXCLUDED.nombre_whatsapp, gozz.whatsapp_conversaciones.nombre_whatsapp)
      RETURNING *`,
-    [d.conexionId, d.jid, d.nombreWhatsapp ?? null, d.fotoPerfilUrl ?? null, d.etapaId, d.contactoId ?? null, d.contactoVinculoEstado ?? "sin_vincular"]
+    [d.conexionId, d.jid, d.nombreWhatsapp ?? null, d.fotoPerfilUrl ?? null, d.telefonoReal ?? null, d.etapaId, d.contactoId ?? null, d.contactoVinculoEstado ?? "sin_vincular"]
   );
   return rows[0];
 }
@@ -314,6 +315,26 @@ export async function actualizarFotoPerfil(conversacionId: string, url: string):
   await query(
     "UPDATE gozz.whatsapp_conversaciones SET foto_perfil_url = $2, updated_at = NOW() WHERE id = $1 AND foto_perfil_url IS NULL",
     [conversacionId, url]
+  );
+}
+
+/** El número real detrás de un `@lid` puede llegar mucho después de creada la conversación (el
+ * directorio de contactos de WhatsApp se sincroniza solo, no bajo pedido) — se corrige cuando
+ * llega, sin pisar un valor que ya se hubiera resuelto antes. */
+export async function actualizarTelefonoReal(conversacionId: string, telefonoReal: string): Promise<void> {
+  await query(
+    "UPDATE gozz.whatsapp_conversaciones SET telefono_real = $2, updated_at = NOW() WHERE id = $1 AND telefono_real IS NULL",
+    [conversacionId, telefonoReal]
+  );
+}
+
+/** Igual que `actualizarFotoPerfil`, pero para el nombre — corrige una conversación que se creó
+ * sin nombre (o, antes de la corrección del bug de `pushName` en mensajes `fromMe`, con el nombre
+ * equivocado) en cuanto WhatsApp comparte el nombre real guardado del contacto. */
+export async function actualizarNombreSiFalta(conversacionId: string, nombre: string): Promise<void> {
+  await query(
+    "UPDATE gozz.whatsapp_conversaciones SET nombre_whatsapp = $2, updated_at = NOW() WHERE id = $1 AND nombre_whatsapp IS NULL",
+    [conversacionId, nombre]
   );
 }
 

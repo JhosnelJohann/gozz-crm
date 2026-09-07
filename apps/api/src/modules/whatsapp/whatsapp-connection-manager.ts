@@ -22,6 +22,9 @@ provider.onMessageStatusUpdate((_conexionId, waMessageId, estado) => {
   if (estado !== "entregado" && estado !== "leido") return;
   service.registrarActualizacionEntrega(waMessageId, estado).catch((e) => console.error(`[whatsapp-cm] registrarActualizacionEntrega(${waMessageId}):`, e?.message));
 });
+provider.onContactoResuelto((conexionId, jid, info) => {
+  service.registrarContactoResuelto(conexionId, jid, info).catch((e) => console.error(`[whatsapp-cm] registrarContactoResuelto(${jid}):`, e?.message));
+});
 
 export async function iniciarConexion(conexionId: string): Promise<void> {
   await provider.connect(conexionId);

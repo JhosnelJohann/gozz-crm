@@ -83,16 +83,26 @@ export async function registrarMensajeEntrante(conexionId: string, msg: WhatsApp
     conversacion = await repo.crearConversacion({
       conexionId,
       jid: msg.jid,
-      nombreWhatsapp: msg.nombrePerfil ?? null,
+      // Si el primer mensaje del hilo lo mandó el dueño de la conexión desde el teléfono
+      // (`fromMe`), su `nombrePerfil` es SU propio nombre, no el del contacto — nombrar así la
+      // conversación fue el bug reportado ("aparece mi propio nombre"). Sin nombre de sobra, se
+      // completará solo en cuanto llegue un mensaje real del contacto (ver la rama de abajo) o el
+      // directorio de contactos de WhatsApp lo resuelva (`registrarContactoResuelto`).
+      nombreWhatsapp: !msg.fromMe ? msg.nombrePerfil ?? null : null,
       fotoPerfilUrl: msg.fotoPerfilUrl ?? null,
+      telefonoReal: msg.jidReal ?? null,
       etapaId: primeraEtapa.id,
       contactoId: contacto?.id ?? null,
       contactoVinculoEstado: contacto ? "vinculado_auto" : "sin_vincular",
     });
-  } else if (!conversacion.foto_perfil_url && msg.fotoPerfilUrl) {
-    // El primer intento pudo fallar (privacidad, red) — si un mensaje posterior sí trae foto,
-    // no hay razón para quedarse sin ella para siempre.
-    await repo.actualizarFotoPerfil(conversacion.id, msg.fotoPerfilUrl);
+  } else {
+    // El primer intento pudo fallar (privacidad, red, o el directorio de contactos de WhatsApp
+    // todavía no había sincronizado) — si un mensaje posterior sí trae el dato, no hay razón para
+    // quedarse sin él para siempre. El nombre solo se completa desde un mensaje que NO es `fromMe`
+    // (ver la nota en baileys.provider.ts sobre por qué el pushName de un mensaje propio no sirve).
+    if (!conversacion.foto_perfil_url && msg.fotoPerfilUrl) await repo.actualizarFotoPerfil(conversacion.id, msg.fotoPerfilUrl);
+    if (!conversacion.telefono_real && msg.jidReal) await repo.actualizarTelefonoReal(conversacion.id, msg.jidReal);
+    if (!conversacion.nombre_whatsapp && !msg.fromMe && msg.nombrePerfil) await repo.actualizarNombreSiFalta(conversacion.id, msg.nombrePerfil);
   }
 
   // fromMe = lo envió el número conectado desde el teléfono físico, fuera de GOZZ (p.ej. el
@@ -208,6 +218,19 @@ export async function registrarFotoPerfilResuelta(conversacionId: string, url: s
   const conv = await repo.getConversacion(conversacionId);
   if (!conv) return;
   await notifyEvento({ tipo: "foto_perfil", conexion_id: conv.conexion_id, conversacion_id: conversacionId, foto_perfil_url: url });
+}
+
+/** El worker escucha `contacts.upsert`/`contacts.update`/`chats.phoneNumberShare` de Baileys —
+ * eventos que llegan solos, no bajo pedido — y avisa aquí cuando WhatsApp revela el nombre
+ * guardado o el número real de un contacto cuya conversación ya existe (típicamente creada antes,
+ * sin ese dato, o con el nombre del propio dueño de la conexión por el bug de `pushName`). Solo
+ * corrige lo que faltaba, nunca pisa un nombre o número que ya se hubiera resuelto o editado. */
+export async function registrarContactoResuelto(conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }): Promise<void> {
+  const conversacion = await repo.getConversacionPorJid(conexionId, jid);
+  if (!conversacion) return;
+  if (info.nombre && !conversacion.nombre_whatsapp) await repo.actualizarNombreSiFalta(conversacion.id, info.nombre);
+  if (info.jidReal && !conversacion.telefono_real) await repo.actualizarTelefonoReal(conversacion.id, info.jidReal);
+  await notifyEvento({ tipo: "contacto_resuelto", conexion_id: conexionId, conversacion_id: conversacion.id });
 }
 
 export async function listarMensajes(conversacionId: string, limit?: number, before?: string) {

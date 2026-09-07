@@ -44,6 +44,7 @@ export interface WhatsAppConversacionDetalle {
   wa_jid: string;
   nombre_whatsapp: string | null;
   foto_perfil_url: string | null;
+  telefono_real: string | null;
   contacto_id: string | null;
   contacto_vinculo_estado: "sin_vincular" | "vinculado_auto" | "vinculado_manual";
   etapa_id: string | null;
