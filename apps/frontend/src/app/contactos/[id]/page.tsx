@@ -4,9 +4,11 @@ import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowLeft, User, Mail, Phone, MessageSquare, FileText, DollarSign, MapPin,
-  Shield, Users as UsersIcon, CheckSquare, Edit3, Save, X, Loader2, Briefcase, Globe, Lock, Eye, EyeOff, ArrowUpRight, Heart, Languages, FolderOpen, Tag, Download, StickyNote, FileType, ChevronDown, ChevronRight, Send, Plus, Trash2, Paperclip, Archive, LayoutGrid, List
+  Shield, Users as UsersIcon, CheckSquare, Edit3, Save, X, Loader2, Briefcase, Globe, Lock, Eye, EyeOff, ArrowUpRight, Heart, Languages, FolderOpen, Tag, Download, StickyNote, FileType, ChevronDown, ChevronRight, Send, Plus, Trash2, Paperclip, Archive, LayoutGrid, List, WhatsappLogo
 } from "@/lib/bootstrap-icons";
 import { ConfirmarArchivadoModal } from "@/components/contactos/ConfirmarArchivadoModal";
+import { ElegirConexionWhatsAppModal } from "@/components/whatsapp/ElegirConexionWhatsAppModal";
+import type { WhatsAppConexion } from "@/components/whatsapp/types";
 import { useFileDrop } from "@/lib/useFileDrop";
 import { NewFileChip, ExistingArchivoChip, type NotaArchivoT } from "@/components/ui/NotaAttachmentChips";
 import { toast } from "sonner";
@@ -139,6 +141,35 @@ export default function ContactoDetailPage() {
   const [previewIndice, setPreviewIndice] = useState<number | null>(null);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [confirmarArchivado, setConfirmarArchivado] = useState(false);
+  const [whatsappBusy, setWhatsappBusy] = useState(false);
+  const [elegirConexionWa, setElegirConexionWa] = useState<WhatsAppConexion[] | null>(null);
+
+  const contactarPorWhatsApp = async (conexionId?: string) => {
+    setWhatsappBusy(true);
+    try {
+      let destino = conexionId;
+      if (!destino) {
+        const r = await fetch("/api/whatsapp/conexiones");
+        const lista: WhatsAppConexion[] = await r.json();
+        const conectadas = lista.filter((x) => x.estado === "conectado");
+        if (conectadas.length === 0) { toast.error("No hay ningún número de WhatsApp conectado todavía."); return; }
+        if (conectadas.length > 1) { setElegirConexionWa(conectadas); return; }
+        destino = conectadas[0].id;
+      }
+      const r2 = await fetch("/api/whatsapp/conversaciones/abrir", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contacto_id: id, conexion_id: destino }),
+      });
+      const d2 = await r2.json();
+      if (!r2.ok) throw new Error(d2.error || "No se pudo abrir la conversación");
+      setElegirConexionWa(null);
+      router.push(`/whatsapp?conversacion=${d2.conversacion_id}`);
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo contactar por WhatsApp");
+    } finally {
+      setWhatsappBusy(false);
+    }
+  };
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/contactos/${id}`);
@@ -333,6 +364,18 @@ export default function ContactoDetailPage() {
                       title="Enviar email a este contacto"
                     >
                       <Send className="h-3.5 w-3.5" /> Enviar email
+                    </motion.button>
+                  )}
+                  {(c.telefono || (c as any).whatsapp) && (
+                    <motion.button
+                      whileTap={{ scale: 0.97 }}
+                      onClick={() => contactarPorWhatsApp()}
+                      disabled={whatsappBusy}
+                      className="h-10 px-4 rounded-xl bg-green-100 text-green-700 font-ui text-[11px] font-bold uppercase tracking-wider hover:bg-green-200 flex items-center gap-2 disabled:opacity-60"
+                      title="Contactar por WhatsApp"
+                    >
+                      {whatsappBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <WhatsappLogo className="h-3.5 w-3.5" weight="fill" />}
+                      WhatsApp
                     </motion.button>
                   )}
                   {/* Eliminar = ARCHIVAR. Nunca borra. El diálogo dice antes qué arrastra (R2);
@@ -536,6 +579,13 @@ export default function ContactoDetailPage() {
         toName={c?.nombre_completo || (c?.nombre ? `${c.nombre} ${c.apellido || ""}`.trim() : undefined)}
         onSent={() => toast.success("Correo enviado")}
       />
+      {elegirConexionWa && (
+        <ElegirConexionWhatsAppModal
+          conexiones={elegirConexionWa}
+          onClose={() => setElegirConexionWa(null)}
+          onElegir={(conexion) => contactarPorWhatsApp(conexion.id)}
+        />
+      )}
       <ConfirmarArchivadoModal
         abierto={confirmarArchivado}
         seleccion={confirmarArchivado ? { modo: "ids", ids: [id] } : null}

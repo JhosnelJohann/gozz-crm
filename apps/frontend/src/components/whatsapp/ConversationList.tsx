@@ -2,12 +2,14 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { WhatsappLogo } from "@/lib/bootstrap-icons";
+import { WhatsAppAvatar } from "./WhatsAppAvatar";
 import type { WhatsAppPipelineStage, WhatsAppTag } from "./types";
 
 export interface ConversacionItem {
   id: string;
   wa_jid: string;
   nombre_whatsapp: string | null;
+  foto_perfil_url: string | null;
   contacto_id: string | null;
   etapa_id: string | null;
   ultimo_mensaje_preview: string | null;
@@ -41,29 +43,35 @@ function friendlyDate(iso: string | null): string {
 export function ConversationList({ conversaciones, etapas, selectedId, etapaFiltro, onEtapaFiltroChange, onSelect, loading }: Props) {
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-1.5 px-3 py-2 overflow-x-auto border-b border-black/5 dark:border-white/10 shrink-0" data-lenis-prevent>
-        <button
-          onClick={() => onEtapaFiltroChange(null)}
-          className={cn(
-            "shrink-0 px-2.5 py-1 rounded-full text-[10.5px] font-ui font-bold uppercase tracking-wider transition",
-            etapaFiltro === null ? "bg-brand-primary text-white" : "bg-black/5 dark:bg-white/10 text-neutral-500 hover:bg-black/10"
-          )}
-        >
-          Todas
-        </button>
-        {etapas.map((e) => (
+      <div className="relative shrink-0">
+        <div className="flex items-center gap-1.5 px-3 py-2 overflow-x-auto border-b border-black/5 dark:border-white/10" data-lenis-prevent>
           <button
-            key={e.id}
-            onClick={() => onEtapaFiltroChange(etapaFiltro === e.id ? null : e.id)}
-            style={etapaFiltro === e.id ? { backgroundColor: e.color, color: "#fff" } : undefined}
+            onClick={() => onEtapaFiltroChange(null)}
             className={cn(
               "shrink-0 px-2.5 py-1 rounded-full text-[10.5px] font-ui font-bold uppercase tracking-wider transition",
-              etapaFiltro !== e.id && "bg-black/5 dark:bg-white/10 text-neutral-500 hover:bg-black/10"
+              etapaFiltro === null ? "bg-brand-primary text-white" : "bg-black/5 dark:bg-white/10 text-neutral-500 hover:bg-black/10"
             )}
           >
-            {e.label}
+            Todas
           </button>
-        ))}
+          {etapas.map((e) => (
+            <button
+              key={e.id}
+              onClick={() => onEtapaFiltroChange(etapaFiltro === e.id ? null : e.id)}
+              style={etapaFiltro === e.id ? { backgroundColor: e.color, color: "#fff" } : undefined}
+              className={cn(
+                "shrink-0 px-2.5 py-1 rounded-full text-[10.5px] font-ui font-bold uppercase tracking-wider transition",
+                etapaFiltro !== e.id && "bg-black/5 dark:bg-white/10 text-neutral-500 hover:bg-black/10"
+              )}
+            >
+              {e.label}
+            </button>
+          ))}
+        </div>
+        {/* El filtro desliza horizontal, pero el borde del panel cortaba el último chip a lo
+            bruto sin ninguna pista de que hay más — esta máscara lo convierte en "desliza para
+            ver más", no en un error visual. */}
+        <div className="pointer-events-none absolute right-0 top-0 bottom-[1px] w-8 bg-gradient-to-l from-bg-canvas dark:from-[#0B0F16] to-transparent" />
       </div>
 
       <div className="flex-1 overflow-y-auto" data-lenis-prevent>
@@ -105,9 +113,7 @@ export function ConversationList({ conversaciones, etapas, selectedId, etapaFilt
                   )}
                 >
                   {active && <span className="absolute left-0 top-0 bottom-0 w-1 bg-brand-primary rounded-r-full" />}
-                  <div className="h-11 w-11 rounded-full bg-brand-green/15 text-brand-green flex items-center justify-center font-bold text-sm shrink-0">
-                    {(c.nombre_whatsapp || c.wa_jid).slice(0, 1).toUpperCase()}
-                  </div>
+                  <WhatsAppAvatar fotoUrl={c.foto_perfil_url} nombre={c.nombre_whatsapp || c.wa_jid} size={44} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <div className={cn("text-[13px] truncate flex-1", c.no_leidos_count > 0 ? "font-bold" : "font-medium text-neutral-700 dark:text-neutral-300")}>

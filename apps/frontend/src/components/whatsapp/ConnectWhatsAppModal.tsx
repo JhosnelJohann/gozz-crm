@@ -9,7 +9,7 @@ import { getSocket } from "@/lib/socket";
 
 interface Props {
   onClose: () => void;
-  onConnected: () => void;
+  onConnected: (conexionId: string) => void;
 }
 
 type Fase = "nombre" | "esperando-qr" | "qr" | "conectando" | "conectado" | "error";
@@ -28,12 +28,37 @@ export function ConnectWhatsAppModal({ onClose, onConnected }: Props) {
     const onEstado = (ev: any) => {
       if (ev.conexion_id !== conexionId) return;
       if (ev.estado === "conectando") setFase("conectando");
-      else if (ev.estado === "conectado") { setFase("conectado"); setTimeout(onConnected, 900); }
+      else if (ev.estado === "conectado") { setFase("conectado"); setTimeout(() => onConnected(conexionId), 900); }
       else if (ev.estado === "error") { setFase("error"); setError(ev.error || "No se pudo conectar"); }
+    };
+    // Un socket que nunca autentica/conecta no dispara ningún evento — sin esto el modal se
+    // queda girando para siempre y nadie se entera de que el problema es la conexión en tiempo
+    // real, no WhatsApp. Se avisa apenas se sabe (connect_error) y, si aun así nada llega, con
+    // un plazo tope.
+    const onConnectError = (e: any) => {
+      setFase("error");
+      setError("No se pudo abrir la conexión en tiempo real (" + (e?.message || "error de red") + "). Revisa tu conexión e intenta de nuevo.");
     };
     socket.on("whatsapp:qr", onQr);
     socket.on("whatsapp:estado", onEstado);
-    return () => { socket.off("whatsapp:qr", onQr); socket.off("whatsapp:estado", onEstado); };
+    socket.on("connect_error", onConnectError);
+
+    const plazo = setTimeout(() => {
+      setFase((f) => {
+        if (f === "esperando-qr" || f === "conectando") {
+          setError("No llegó el código QR a tiempo. Puede ser un problema de conexión en tiempo real — intenta de nuevo.");
+          return "error";
+        }
+        return f;
+      });
+    }, 25000);
+
+    return () => {
+      socket.off("whatsapp:qr", onQr);
+      socket.off("whatsapp:estado", onEstado);
+      socket.off("connect_error", onConnectError);
+      clearTimeout(plazo);
+    };
   }, [conexionId, onConnected]);
 
   const crear = async () => {

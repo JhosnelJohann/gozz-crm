@@ -102,6 +102,34 @@ export function registerWhatsAppRoutes(app: Express, upload: Multer) {
     res.json({ ok: true });
   });
 
+  // "Contactar por WhatsApp" desde la ficha del contacto — consigue-o-crea la conversación y la
+  // deja vinculada, para poder escribirle de una sin pasar antes por "Vincular".
+  app.post("/api/whatsapp/conversaciones/abrir", requireAuth, async (req, res) => {
+    const conexionId = String(req.body?.conexion_id || "");
+    const contactoId = String(req.body?.contacto_id || "");
+    if (!conexionId || !contactoId) { res.status(400).json({ error: "conexion_id y contacto_id son requeridos" }); return; }
+    if (!(await requireAccesoConexion(req, res, conexionId))) return;
+    try {
+      const { conversacionId } = await service.abrirConversacionConContacto(contactoId, conexionId);
+      res.json({ conversacion_id: conversacionId });
+    } catch (e: any) {
+      res.status(400).json({ error: e?.message || "No se pudo abrir la conversación" });
+    }
+  });
+
+  // Alta rápida de contacto desde "Vincular o crear contacto" en el perfil de una conversación —
+  // email OPCIONAL a propósito, solo aquí (ver whatsapp.service.ts crearContactoDesdeWhatsApp).
+  // No usa /api/contactos, que sigue exigiendo email para cualquier otro que lo llame.
+  app.post("/api/whatsapp/contactos", requireAuth, async (req, res) => {
+    const nombre = String(req.body?.nombre_completo || "").trim();
+    const telefono = String(req.body?.telefono || "").trim();
+    const email = req.body?.email ? String(req.body.email).trim() : null;
+    if (nombre.length < 2) { res.status(400).json({ error: "Ponle un nombre al contacto" }); return; }
+    if (!telefono) { res.status(400).json({ error: "El teléfono es requerido" }); return; }
+    const contacto = await service.crearContactoDesdeWhatsApp(nombre, telefono, email);
+    res.json({ contacto });
+  });
+
   // ---- Conversaciones ----
   app.get("/api/whatsapp/conversaciones/:id", requireAuth, async (req, res) => {
     const id = String(req.params.id);
@@ -141,7 +169,8 @@ export function registerWhatsAppRoutes(app: Express, upload: Multer) {
   app.post("/api/whatsapp/conversaciones/:id/leer", requireAuth, async (req, res) => {
     const id = String(req.params.id);
     if (!(await resolverConversacionConAcceso(req, res, id))) return;
-    await service.marcarLeida(id);
+    const u = (req as any).user;
+    await service.marcarLeida(id, u.sub);
     res.json({ ok: true });
   });
 

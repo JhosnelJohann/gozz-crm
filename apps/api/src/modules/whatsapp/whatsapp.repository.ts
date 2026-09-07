@@ -256,8 +256,16 @@ export async function tocarUltimoMensaje(
   );
 }
 
-export async function marcarLeida(conversacionId: string): Promise<void> {
+export async function marcarLeida(conversacionId: string, userId: string | null): Promise<void> {
   await query("UPDATE gozz.whatsapp_conversaciones SET no_leidos_count = 0 WHERE id = $1", [conversacionId]);
+  // "Visto por el equipo" — distinto de los checks de envío (`estado_entrega`, que son la
+  // confirmación de WhatsApp para lo que NOSOTROS enviamos). Esto es al revés: marca que alguien
+  // del equipo ya vio, dentro del CRM, un mensaje que un lead/cliente nos mandó.
+  await query(
+    `UPDATE gozz.whatsapp_mensajes SET visto_at = NOW(), visto_por = $2
+     WHERE conversacion_id = $1 AND direccion = 'entrante' AND visto_at IS NULL`,
+    [conversacionId, userId]
+  );
 }
 
 export async function setEtapa(conversacionId: string, etapaId: string): Promise<WhatsAppConversacion> {
@@ -300,6 +308,36 @@ export async function marcarConvertida(conversacionId: string, oportunidadId: st
     [conversacionId, oportunidadId, userId]
   );
   return rows[0];
+}
+
+export async function actualizarFotoPerfil(conversacionId: string, url: string): Promise<void> {
+  await query(
+    "UPDATE gozz.whatsapp_conversaciones SET foto_perfil_url = $2, updated_at = NOW() WHERE id = $1 AND foto_perfil_url IS NULL",
+    [conversacionId, url]
+  );
+}
+
+/**
+ * Alta mínima de contacto SOLO para el flujo "crear y vincular" desde WhatsApp — a propósito NO
+ * pasa por `queFaltaParaElAlta` de `contactos.routes.ts` (que exige email siempre): aquí el email
+ * es opcional por decisión explícita, pero SOLO para este camino. El endpoint general
+ * `POST /api/contactos` sigue exigiéndolo igual que siempre, para cualquier otro que lo llame.
+ */
+export async function crearContactoMinimo(d: { nombreCompleto: string; telefono: string; email: string | null }): Promise<{ id: string; nombre_completo: string }> {
+  const rows = await query<{ id: string; nombre_completo: string }>(
+    `INSERT INTO gozz.contactos_cache (nombre_completo, telefono, email) VALUES ($1, $2, $3) RETURNING id, nombre_completo`,
+    [d.nombreCompleto, d.telefono, d.email]
+  );
+  return rows[0];
+}
+
+/** Para "Contactar por WhatsApp" desde la ficha del contacto — el teléfono que ya tenga guardado. */
+export async function getTelefonoContacto(contactoId: string): Promise<string | null> {
+  const rows = await query<{ telefono: string | null; whatsapp: string | null }>(
+    "SELECT telefono, whatsapp FROM gozz.contactos_cache WHERE id = $1",
+    [contactoId]
+  );
+  return rows[0]?.whatsapp || rows[0]?.telefono || null;
 }
 
 /** Match por teléfono normalizado (últimos 10 dígitos) contra `telefono`/`whatsapp` de contactos_cache. */
@@ -370,6 +408,12 @@ export async function listMensajes(conversacionId: string, limit = 50, before?: 
 
 export async function getMensaje(id: string): Promise<WhatsAppMensaje | null> {
   const rows = await query<WhatsAppMensaje>("SELECT * FROM gozz.whatsapp_mensajes WHERE id = $1", [id]);
+  return rows[0] ?? null;
+}
+
+/** Para las confirmaciones de entrega/lectura de Baileys, que solo traen el `wa_message_id`. */
+export async function getMensajePorWaId(waMessageId: string): Promise<WhatsAppMensaje | null> {
+  const rows = await query<WhatsAppMensaje>("SELECT * FROM gozz.whatsapp_mensajes WHERE wa_message_id = $1", [waMessageId]);
   return rows[0] ?? null;
 }
 

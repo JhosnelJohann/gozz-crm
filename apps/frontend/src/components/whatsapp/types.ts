@@ -1,3 +1,11 @@
+export interface WhatsAppConexion {
+  id: string;
+  nombre: string;
+  telefono: string | null;
+  estado: "pendiente" | "conectando" | "conectado" | "desconectado" | "error" | "cerrada";
+  ultimo_error: string | null;
+}
+
 export interface WhatsAppPipelineStage {
   id: string;
   key: string;
@@ -26,6 +34,8 @@ export interface WhatsAppMensaje {
   archivo_tipo: string | null;
   estado_entrega: "pendiente" | "enviado" | "entregado" | "leido" | "fallido";
   created_at: string;
+  visto_at: string | null;
+  visto_por: string | null;
 }
 
 export interface WhatsAppConversacionDetalle {
@@ -33,6 +43,7 @@ export interface WhatsAppConversacionDetalle {
   conexion_id: string;
   wa_jid: string;
   nombre_whatsapp: string | null;
+  foto_perfil_url: string | null;
   contacto_id: string | null;
   contacto_vinculo_estado: "sin_vincular" | "vinculado_auto" | "vinculado_manual";
   etapa_id: string | null;

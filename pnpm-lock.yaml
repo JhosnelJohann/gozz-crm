@@ -243,6 +243,9 @@ importers:
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
+      libphonenumber-js:
+        specifier: ^1.11.19
+        version: 1.13.12
       livekit-client:
         specifier: ^2.5
         version: 2.18.3(@types/dom-mediacapture-record@1.0.22)

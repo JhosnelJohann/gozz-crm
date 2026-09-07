@@ -7,12 +7,14 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
+  proto,
   type WASocket,
   type WAMessage,
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 import path from "path";
 import fs from "fs";
+import type { WhatsAppMensajeEstado } from "@gozz/shared-types";
 import { UPLOADS_ROOT, shard, uploadUrlToAbsPath } from "../../../lib/storage.js";
 import { usePostgresAuthState, clearAuthState } from "./postgres-auth-state.js";
 import type {
@@ -52,11 +54,23 @@ function extractContent(msg: WAMessage): {
   return { tipo: "sistema", contenido: null, media: null };
 }
 
+/** SERVER_ACK(2) se queda como "ya lo tenemos como enviado" — no hace falta notificar. */
+function estadoDesdeStatus(status: number | null | undefined): WhatsAppMensajeEstado | null {
+  if (status === proto.WebMessageInfo.Status.DELIVERY_ACK) return "entregado";
+  if (status === proto.WebMessageInfo.Status.READ || status === proto.WebMessageInfo.Status.PLAYED) return "leido";
+  return null;
+}
+
 export class BaileysWhatsAppProvider implements WhatsAppProvider {
   private sockets = new Map<string, WASocket>();
   private qrCbs: ((conexionId: string, qr: string) => void)[] = [];
   private stateCbs: ((conexionId: string, update: WhatsAppConnectionUpdate) => void)[] = [];
   private msgCbs: ((conexionId: string, msg: WhatsAppIncomingMessage) => void)[] = [];
+  private statusCbs: ((conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void)[] = [];
+  /** Evita pedir la foto de perfil por cada mensaje del mismo jid — se resuelve una sola vez por
+   * proceso (si falla o el usuario tiene la foto privada, se cachea `null` igual: reintentar en
+   * cada mensaje entrante no vale la pena). */
+  private fotoPerfilCache = new Map<string, string | null>();
 
   async connect(conexionId: string): Promise<void> {
     if (this.sockets.has(conexionId)) return;
@@ -109,6 +123,33 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
         }
       }
     });
+
+    // Confirmaciones de entrega/lectura de mensajes YA enviados — sin esto el doble-check gris y
+    // el azul de "leído" nunca aparecen, sin importar cuánto se espere (el envío solo confirma
+    // "enviado", un único check).
+    sock.ev.on("messages.update", (updates) => {
+      for (const u of updates) {
+        const waMessageId = u.key.id;
+        const estado = estadoDesdeStatus(u.update.status as unknown as number);
+        if (waMessageId && estado) this.statusCbs.forEach((cb) => cb(conexionId, waMessageId, estado));
+      }
+    });
+  }
+
+  private async fetchFotoPerfil(sock: WASocket, jid: string): Promise<string | null> {
+    if (this.fotoPerfilCache.has(jid)) return this.fotoPerfilCache.get(jid)!;
+    const url = await sock.profilePictureUrl(jid, "image").catch(() => undefined);
+    const resuelta = url ?? null;
+    this.fotoPerfilCache.set(jid, resuelta);
+    return resuelta;
+  }
+
+  /** Versión pública, para resolver bajo demanda (whatsapp-connection-manager.ts) una conversación
+   * que no tiene foto porque no tuvo actividad desde que se agregó esta función. */
+  async resolverFotoPerfil(conexionId: string, jid: string): Promise<string | null> {
+    const sock = this.sockets.get(conexionId);
+    if (!sock) return null;
+    return this.fetchFotoPerfil(sock, jid);
   }
 
   private async handleIncoming(conexionId: string, sock: WASocket, msg: WAMessage): Promise<void> {
@@ -143,11 +184,14 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
       }
     }
 
+    const fotoPerfilUrl = await this.fetchFotoPerfil(sock, jid);
+
     this.msgCbs.forEach((cb) => cb(conexionId, {
       jid, waMessageId, tipo, contenido, archivoUrl, archivoNombre, archivoTipo,
       timestamp: new Date((Number(msg.messageTimestamp) || Date.now() / 1000) * 1000),
       nombrePerfil: msg.pushName || null,
       fromMe: !!msg.key.fromMe,
+      fotoPerfilUrl,
     }));
   }
 
@@ -186,4 +230,5 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
   onQr(cb: (conexionId: string, qr: string) => void): void { this.qrCbs.push(cb); }
   onConnectionUpdate(cb: (conexionId: string, update: WhatsAppConnectionUpdate) => void): void { this.stateCbs.push(cb); }
   onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void): void { this.msgCbs.push(cb); }
+  onMessageStatusUpdate(cb: (conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void): void { this.statusCbs.push(cb); }
 }

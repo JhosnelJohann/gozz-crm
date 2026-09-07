@@ -119,6 +119,185 @@ describe("WhatsApp — mensajes entrantes", () => {
   });
 });
 
+describe("WhatsApp — ticks de entrega y leído", () => {
+  it("progresa de enviado a entregado y a leído", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52133${sufijo().replace(/\D/g, "").padEnd(7, "3").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-in-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+    } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+    const mensaje = await service.enviarMensaje(conv!.id, userId, { tipo: "texto", contenido: "Hola!" });
+    await service.registrarConfirmacionEnvio(mensaje.id, "WA-ticks-1");
+    expect((await repo.getMensaje(mensaje.id))?.estado_entrega).toBe("enviado");
+
+    await service.registrarActualizacionEntrega("WA-ticks-1", "entregado");
+    expect((await repo.getMensaje(mensaje.id))?.estado_entrega).toBe("entregado");
+
+    await service.registrarActualizacionEntrega("WA-ticks-1", "leido");
+    expect((await repo.getMensaje(mensaje.id))?.estado_entrega).toBe("leido");
+  });
+
+  it("no retrocede: un 'entregado' tardío no pisa un 'leído' ya registrado", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52144${sufijo().replace(/\D/g, "").padEnd(7, "4").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-in-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+    } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+    const mensaje = await service.enviarMensaje(conv!.id, userId, { tipo: "texto", contenido: "Hola!" });
+    await service.registrarConfirmacionEnvio(mensaje.id, "WA-ticks-2");
+
+    await service.registrarActualizacionEntrega("WA-ticks-2", "leido");
+    await service.registrarActualizacionEntrega("WA-ticks-2", "entregado");
+    expect((await repo.getMensaje(mensaje.id))?.estado_entrega).toBe("leido");
+  });
+
+  it("un wa_message_id desconocido no revienta (mensaje de otra conexión o que nunca se guardó)", async () => {
+    await expect(service.registrarActualizacionEntrega("WA-no-existe-jamas", "leido")).resolves.toBeUndefined();
+  });
+});
+
+describe("WhatsApp — foto de perfil", () => {
+  it("guarda la foto de perfil al crear la conversación", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52155${sufijo().replace(/\D/g, "").padEnd(7, "5").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+      fotoPerfilUrl: "https://pps.whatsapp.net/foto.jpg",
+    } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+    expect(conv?.foto_perfil_url).toBe("https://pps.whatsapp.net/foto.jpg");
+  });
+
+  it("si el primer mensaje no trajo foto, un mensaje posterior sí la completa", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52166${sufijo().replace(/\D/g, "").padEnd(7, "6").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+    } as any);
+    let conv = await repo.getConversacionPorJid(conexion.id, jid);
+    expect(conv?.foto_perfil_url).toBeNull();
+
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Otro mensaje", timestamp: new Date(),
+      fotoPerfilUrl: "https://pps.whatsapp.net/foto2.jpg",
+    } as any);
+    conv = await repo.getConversacionPorJid(conexion.id, jid);
+    expect(conv?.foto_perfil_url).toBe("https://pps.whatsapp.net/foto2.jpg");
+  });
+
+  it("resuelta bajo demanda (conversación vieja sin actividad reciente), registrarFotoPerfilResuelta la guarda", async () => {
+    // Simula lo que hace whatsapp-connection-manager.ts cuando el worker logra resolver la foto
+    // de una conversación que existía desde antes sin ella (listar/abrir la disparó).
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52177${sufijo().replace(/\D/g, "").padEnd(7, "7").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+    } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+    expect(conv?.foto_perfil_url).toBeNull();
+
+    await service.registrarFotoPerfilResuelta(conv!.id, "https://pps.whatsapp.net/tardia.jpg");
+    const actualizada = await repo.getConversacion(conv!.id);
+    expect(actualizada?.foto_perfil_url).toBe("https://pps.whatsapp.net/tardia.jpg");
+  });
+});
+
+describe("WhatsApp — visto por el equipo", () => {
+  it("marcar leída marca los mensajes entrantes como vistos, pero no los salientes", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52188${sufijo().replace(/\D/g, "").padEnd(7, "8").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+    } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+    const saliente = await service.enviarMensaje(conv!.id, userId, { tipo: "texto", contenido: "Hola!" });
+
+    let mensajes = await repo.listMensajes(conv!.id);
+    expect(mensajes.every((m) => m.visto_at === null)).toBe(true);
+
+    await service.marcarLeida(conv!.id, userId);
+
+    mensajes = await repo.listMensajes(conv!.id);
+    const entrante = mensajes.find((m) => m.direccion === "entrante")!;
+    const salienteFila = mensajes.find((m) => m.id === saliente.id)!;
+    expect(entrante.visto_at).not.toBeNull();
+    expect(entrante.visto_por).toBe(userId);
+    expect(salienteFila.visto_at).toBeNull(); // "visto" no aplica a lo que GOZZ envía
+  });
+
+  it("no pisa un visto_at ya puesto (idempotente al volver a abrir la conversación)", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52199${sufijo().replace(/\D/g, "").padEnd(7, "9").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+    } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+
+    await service.marcarLeida(conv!.id, userId);
+    const primeraVez = (await repo.listMensajes(conv!.id))[0].visto_at;
+
+    // Un segundo usuario de verdad — `usuarioDePruebas()` es un singleton (siempre el mismo id),
+    // así que reutilizarlo no probaría nada aquí.
+    const otro = await query<any>(
+      `INSERT INTO gozz.users (email, password_hash, nombre, nivel_acceso)
+       VALUES ($1, 'no-es-un-hash', 'Segundo usuario de prueba', 'usuario') RETURNING id`,
+      [`suite-otro-${sufijo()}@pruebas.invalid`]
+    );
+    await service.marcarLeida(conv!.id, otro[0].id);
+    const segundaVez = await repo.listMensajes(conv!.id);
+    expect(segundaVez[0].visto_at).toEqual(primeraVez);
+    expect(segundaVez[0].visto_por).toBe(userId); // el primero que lo vio, no el segundo
+  });
+});
+
+describe("WhatsApp — crear contacto desde WhatsApp (email opcional)", () => {
+  it("crea el contacto sin email", async () => {
+    const contacto = await service.crearContactoDesdeWhatsApp(`Sin email ${sufijo()}`, "+15550002222", null);
+    expect(contacto.id).toBeTruthy();
+  });
+
+  it("crea el contacto con email cuando se da", async () => {
+    const nombre = `Con email ${sufijo()}`;
+    const contacto = await service.crearContactoDesdeWhatsApp(nombre, "+15550003333", "prueba@ejemplo.com");
+    expect(contacto.nombre_completo).toBe(nombre);
+  });
+});
+
+describe("WhatsApp — abrir conversación desde un contacto", () => {
+  it("crea (o encuentra) la conversación por el teléfono del contacto y la deja vinculada", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const digitos = sufijo().replace(/\D/g, "").padEnd(10, "8").slice(0, 10);
+    const contactoId = await crearContactoConTelefono(`+1${digitos}`);
+
+    const { conversacionId } = await service.abrirConversacionConContacto(contactoId, conexion.id);
+    const conv = await repo.getConversacion(conversacionId);
+    expect(conv?.contacto_id).toBe(contactoId);
+    expect(conv?.contacto_vinculo_estado).toBe("vinculado_manual");
+
+    // Repetir la operación (el usuario le da "Contactar por WhatsApp" dos veces) no crea una
+    // segunda conversación — es la misma, por el upsert (conexion_id, wa_jid).
+    const otraVez = await service.abrirConversacionConContacto(contactoId, conexion.id);
+    expect(otraVez.conversacionId).toBe(conversacionId);
+  });
+
+  it("rechaza un contacto sin teléfono ni whatsapp guardado", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const r = await query<any>(`INSERT INTO gozz.contactos_cache (nombre_completo) VALUES ($1) RETURNING id`, [`Sin teléfono ${sufijo()}`]);
+    await expect(service.abrirConversacionConContacto(r[0].id, conexion.id)).rejects.toThrow(/teléfono/);
+  });
+});
+
 describe("WhatsApp — convertir a Oportunidad", () => {
   it("rechaza convertir una conversación sin contacto vinculado", async () => {
     const userId = await usuarioDePruebas();

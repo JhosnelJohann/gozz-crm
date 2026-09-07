@@ -76,4 +76,9 @@ export interface WhatsAppMensaje {
   estado_entrega: WhatsAppMensajeEstado;
   error_envio: string | null;
   created_at: string;
+  /** "Visto por el equipo" — distinto de `estado_entrega` (que es la confirmación de WhatsApp
+   * para lo que GOZZ envía). Solo aplica a mensajes `entrante`: cuándo, y quién del equipo, vio
+   * este mensaje dentro del CRM. */
+  visto_at: string | null;
+  visto_por: string | null;
 }

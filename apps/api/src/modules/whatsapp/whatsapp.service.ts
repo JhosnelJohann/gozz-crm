@@ -23,6 +23,12 @@ async function notifyEnviar(mensajeId: string): Promise<void> {
   );
 }
 
+async function notifyPedirFoto(conversacionId: string): Promise<void> {
+  await query("SELECT pg_notify('whatsapp_pedir_foto', $1)", [JSON.stringify({ conversacion_id: conversacionId })]).catch((e) =>
+    console.error("[whatsapp notify pedir_foto]", e?.message)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Conexiones (llamado desde las rutas HTTP)
 // ---------------------------------------------------------------------------
@@ -78,10 +84,15 @@ export async function registrarMensajeEntrante(conexionId: string, msg: WhatsApp
       conexionId,
       jid: msg.jid,
       nombreWhatsapp: msg.nombrePerfil ?? null,
+      fotoPerfilUrl: msg.fotoPerfilUrl ?? null,
       etapaId: primeraEtapa.id,
       contactoId: contacto?.id ?? null,
       contactoVinculoEstado: contacto ? "vinculado_auto" : "sin_vincular",
     });
+  } else if (!conversacion.foto_perfil_url && msg.fotoPerfilUrl) {
+    // El primer intento pudo fallar (privacidad, red) — si un mensaje posterior sí trae foto,
+    // no hay razón para quedarse sin ella para siempre.
+    await repo.actualizarFotoPerfil(conversacion.id, msg.fotoPerfilUrl);
   }
 
   // fromMe = lo envió el número conectado desde el teléfono físico, fuera de GOZZ (p.ej. el
@@ -129,6 +140,21 @@ export async function mensajesPendientesDeEnvio(conexionId?: string) {
   return repo.listMensajesPendientes(conexionId);
 }
 
+/** Confirmación de entrega/lectura de WhatsApp para un mensaje saliente YA enviado. Si el mensaje
+ * no existe (id de otra conexión, o uno que la app nunca guardó) no hace nada — no es un error. */
+export async function registrarActualizacionEntrega(waMessageId: string, estado: "entregado" | "leido"): Promise<void> {
+  const m = await repo.getMensajePorWaId(waMessageId);
+  if (!m || m.direccion !== "saliente") return;
+  // No retroceder: un "leído" tardío no debe pisar un estado más avanzado, y repetir el mismo
+  // evento (WhatsApp puede reenviar la confirmación) no debe generar ruido de notificaciones.
+  const orden: Record<string, number> = { pendiente: 0, enviado: 1, entregado: 2, leido: 3, fallido: 0 };
+  if ((orden[m.estado_entrega] ?? 0) >= orden[estado]) return;
+  await repo.actualizarEstadoMensaje(m.id, estado);
+  const conv = await repo.getConversacion(m.conversacion_id);
+  if (!conv) return;
+  await notifyEvento({ tipo: "mensaje_estado", conexion_id: conv.conexion_id, conversacion_id: m.conversacion_id, mensaje_id: m.id, estado });
+}
+
 // ---------------------------------------------------------------------------
 // Etapas y tags
 // ---------------------------------------------------------------------------
@@ -160,22 +186,36 @@ export async function listarConversaciones(conexionId: string, filtros: repo.Fil
   const conTags = await Promise.all(
     conversaciones.map(async (c) => ({ ...c, tags: await repo.tagsDeConversacion(c.id) }))
   );
+  // La resolución automática de la foto solo ocurre cuando llega o sale un mensaje nuevo — una
+  // conversación vieja sin actividad reciente se quedaría sin foto para siempre. Al listar (y al
+  // abrir, ver abajo) se pide de una vez, sin bloquear la respuesta.
+  for (const c of conTags) if (!c.foto_perfil_url) notifyPedirFoto(c.id).catch(() => {});
   return conTags;
 }
 
 export async function obtenerConversacion(id: string) {
   const conversacion = await repo.getConversacion(id);
   if (!conversacion) return null;
+  if (!conversacion.foto_perfil_url) notifyPedirFoto(id).catch(() => {});
   const tags = await repo.tagsDeConversacion(id);
   return { ...conversacion, tags };
+}
+
+/** El worker escucha esto y, si tiene una conexión activa para esa conversación, intenta
+ * resolver su foto de perfil y la guarda — llamado desde whatsapp-connection-manager.ts. */
+export async function registrarFotoPerfilResuelta(conversacionId: string, url: string): Promise<void> {
+  await repo.actualizarFotoPerfil(conversacionId, url);
+  const conv = await repo.getConversacion(conversacionId);
+  if (!conv) return;
+  await notifyEvento({ tipo: "foto_perfil", conexion_id: conv.conexion_id, conversacion_id: conversacionId, foto_perfil_url: url });
 }
 
 export async function listarMensajes(conversacionId: string, limit?: number, before?: string) {
   return repo.listMensajes(conversacionId, limit, before);
 }
 
-export async function marcarLeida(conversacionId: string) {
-  await repo.marcarLeida(conversacionId);
+export async function marcarLeida(conversacionId: string, userId: string | null) {
+  await repo.marcarLeida(conversacionId, userId);
 }
 
 export async function cambiarEtapa(conversacionId: string, etapaId: string) {
@@ -192,6 +232,34 @@ export async function archivar(conversacionId: string, archivado: boolean) {
 
 export async function vincularContactoManual(conversacionId: string, contactoId: string) {
   return repo.vincularContacto(conversacionId, contactoId, "vinculado_manual");
+}
+
+/** Alta rápida de contacto desde WhatsApp — email opcional, a propósito, y SOLO aquí (ver
+ * repo.crearContactoMinimo). No reemplaza a `POST /api/contactos`, que sigue exigiéndolo siempre. */
+export async function crearContactoDesdeWhatsApp(nombreCompleto: string, telefono: string, email: string | null) {
+  return repo.crearContactoMinimo({ nombreCompleto, telefono, email });
+}
+
+/**
+ * "Contactar por WhatsApp" desde la ficha del contacto: consigue-o-crea la conversación para su
+ * teléfono en la conexión elegida (mismo upsert que usa un mensaje entrante nuevo) y la deja
+ * vinculada a ese contacto de una vez — sin esto, el primer mensaje que se le mande llegaría "sin
+ * vincular" hasta que alguien lo hiciera a mano.
+ */
+export async function abrirConversacionConContacto(contactoId: string, conexionId: string): Promise<{ conversacionId: string }> {
+  const telefono = await repo.getTelefonoContacto(contactoId);
+  if (!telefono) throw new Error("Este contacto no tiene teléfono ni WhatsApp guardado");
+  const digitos = telefono.replace(/\D/g, "");
+  if (digitos.length < 7) throw new Error("El teléfono del contacto no es válido para WhatsApp");
+  const primeraEtapa = await repo.getPrimeraEtapa();
+  if (!primeraEtapa) throw new Error("No hay etapas de pipeline de WhatsApp configuradas");
+
+  const jid = `${digitos}@s.whatsapp.net`;
+  let conversacion = await repo.crearConversacion({ conexionId, jid, etapaId: primeraEtapa.id });
+  if (conversacion.contacto_id !== contactoId) {
+    conversacion = await repo.vincularContacto(conversacion.id, contactoId, "vinculado_manual");
+  }
+  return { conversacionId: conversacion.id };
 }
 
 /** Encola un mensaje saliente: lo inserta en 'pendiente' y avisa al worker por NOTIFY. */

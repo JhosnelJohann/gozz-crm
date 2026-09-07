@@ -182,6 +182,7 @@ async function startWhatsAppNotifyListener() {
         const event = payload.tipo === "qr" ? "whatsapp:qr"
           : payload.tipo === "estado" ? "whatsapp:estado"
           : payload.tipo === "mensaje" ? "whatsapp:mensaje"
+          : payload.tipo === "foto_perfil" ? "whatsapp:foto-perfil"
           : "whatsapp:mensaje-estado";
         for (const uid of userIds) emitToUser(uid, event, payload);
       } catch (e: any) {

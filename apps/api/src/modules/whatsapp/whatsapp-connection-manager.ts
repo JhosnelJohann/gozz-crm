@@ -18,6 +18,10 @@ provider.onConnectionUpdate((conexionId, update) => {
 provider.onMessage((conexionId, msg) => {
   service.registrarMensajeEntrante(conexionId, msg).catch((e) => console.error(`[whatsapp-cm] registrarMensajeEntrante(${conexionId}):`, e?.message));
 });
+provider.onMessageStatusUpdate((_conexionId, waMessageId, estado) => {
+  if (estado !== "entregado" && estado !== "leido") return;
+  service.registrarActualizacionEntrega(waMessageId, estado).catch((e) => console.error(`[whatsapp-cm] registrarActualizacionEntrega(${waMessageId}):`, e?.message));
+});
 
 export async function iniciarConexion(conexionId: string): Promise<void> {
   await provider.connect(conexionId);
@@ -67,4 +71,14 @@ export async function reenviarPendientesAlArrancar(): Promise<void> {
   for (const m of pendientes) {
     await enviarMensajePendiente(m.id).catch((e) => console.error(`[whatsapp-worker] pendiente ${m.id}:`, e?.message));
   }
+}
+
+/** Pedido bajo demanda (al listar/abrir una conversación sin foto) — solo hace algo si la
+ * conexión dueña sigue activa en este proceso; si no, no pasa nada (se reintentará la próxima
+ * vez que se liste/abra). */
+export async function actualizarFotoConversacion(conversacionId: string): Promise<void> {
+  const conversacion = await repo.getConversacion(conversacionId);
+  if (!conversacion || conversacion.foto_perfil_url) return;
+  const url = await provider.resolverFotoPerfil(conversacion.conexion_id, conversacion.wa_jid);
+  if (url) await service.registrarFotoPerfilResuelta(conversacionId, url);
 }
