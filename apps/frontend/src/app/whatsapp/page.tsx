@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
@@ -18,6 +18,14 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import type { WhatsAppConexion, WhatsAppConversacionDetalle, WhatsAppMensaje, WhatsAppPipelineStage, WhatsAppTag } from "@/components/whatsapp/types";
 
 export default function WhatsAppPage() {
+  return (
+    <Suspense fallback={null}>
+      <WhatsAppPageInner />
+    </Suspense>
+  );
+}
+
+function WhatsAppPageInner() {
   const [conexiones, setConexiones] = useState<WhatsAppConexion[]>([]);
   const [activeConexionId, setActiveConexionId] = useState<string | null>(null);
   const [etapas, setEtapas] = useState<WhatsAppPipelineStage[]>([]);
