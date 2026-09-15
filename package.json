@@ -12,6 +12,7 @@
     "migrate:status": "node scripts/run-migrations.mjs status",
     "migrate:baseline": "node scripts/run-migrations.mjs baseline",
     "seed:super-admin": "node scripts/seed-super-admin.mjs",
+    "create:user": "node scripts/create-user.mjs",
     "setup:local-dirs": "node scripts/ensure-local-dirs.mjs",
     "postinstall": "node scripts/ensure-local-dirs.mjs"
   },
