@@ -87,6 +87,17 @@ export async function putObject(key: string, buf: Buffer, contentType?: string):
   throw new Error(`R2 PUT falló: HTTP ${r.status}`);
 }
 
+/**
+ * PUT sin condición (sobrescribe si ya existe). Para keys NO content-addressed — las usa
+ * lib/storage.ts (avatares, adjuntos), nunca Drive (que siempre usa putObject content-addressed
+ * para no perder dedup por sha256).
+ */
+export async function putObjectOverwrite(key: string, buf: Buffer, contentType?: string): Promise<PutResult> {
+  const r = await r2req("PUT", key, { body: buf, headers: contentType ? { "content-type": contentType } : {} });
+  if (r.status === 200 || r.status === 201) return { etag: cleanEtag(r.headers.get("etag")), existed: false, status: r.status };
+  throw new Error(`R2 PUT (overwrite) falló: HTTP ${r.status}`);
+}
+
 /** GET server-side de un objeto (los bytes se sirven por el proxy autenticado; nunca URLs firmadas públicas). */
 export async function getObject(key: string): Promise<Buffer> {
   const r = await r2req("GET", key);

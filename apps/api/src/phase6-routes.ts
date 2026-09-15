@@ -6,6 +6,7 @@ import { hashPassword, requireAuth, verifyPassword } from "./shared/auth-middlew
 import multerPkg from "multer";
 import pathModule from "path";
 import fsModule from "fs";
+import { syncUploadedFileToR2 } from "./lib/storage.js";
 
 const AVATAR_DIR = (process.env.UPLOADS_DIR || "/root/gozz-crm/data/uploads") + "/avatars";
 try { fsModule.mkdirSync(AVATAR_DIR, { recursive: true }); } catch {}
@@ -202,6 +203,7 @@ export function registerPhase6Routes(app: Express) {
     if (!f) { res.status(400).json({ error: "Archivo requerido (campo: foto)" }); return; }
     const url = `/uploads/avatars/${f.filename}`;
     try {
+      await syncUploadedFileToR2(url, f.path);
       const rows = await query<any>(
         "UPDATE gozz.users SET foto_perfil_url = $1, updated_at = NOW() WHERE id = $2 RETURNING id, foto_perfil_url",
         [url, u.sub]
@@ -235,6 +237,7 @@ export function registerPhase6Routes(app: Express) {
     if (!f) { res.status(400).json({ error: "Archivo requerido (campo: foto)" }); return; }
     const url = `/uploads/avatars/${f.filename}`;
     try {
+      await syncUploadedFileToR2(url, f.path);
       const rows = await query<any>(
         "UPDATE gozz.users SET foto_perfil_url = $1, updated_at = NOW() WHERE id = $2 RETURNING id, foto_perfil_url",
         [url, req.params.id]

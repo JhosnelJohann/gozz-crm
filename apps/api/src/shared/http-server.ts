@@ -9,6 +9,30 @@ import path from "path";
 import fs from "fs";
 import { requireAuth } from "./auth-middleware.js";
 import { UPLOADS_DIR } from "./env.js";
+import { readUploadedFileBytes } from "../lib/storage.js";
+
+// Tabla chica local a esta ruta — a propósito NO se reutiliza la de drive-routes.ts (Drive queda
+// fuera de esta migración, ver plan). Solo para el header Content-Type de la respuesta; R2 no
+// guarda un content-type confiable propio (nunca se lee directo de R2, siempre por este proxy).
+const EXT_MIME: Record<string, string> = {
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp",
+  svg: "image/svg+xml", bmp: "image/bmp",
+  pdf: "application/pdf",
+  mp3: "audio/mpeg", ogg: "audio/ogg", wav: "audio/wav", m4a: "audio/mp4",
+  mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  csv: "text/csv", txt: "text/plain",
+  zip: "application/zip",
+};
+function guessContentType(rel: string): string {
+  const ext = (rel.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || "";
+  return EXT_MIME[ext] || "application/octet-stream";
+}
 
 export interface HttpApp {
   app: Express;
@@ -36,7 +60,21 @@ export function createHttpApp(): HttpApp {
   // autenticarse — verificado en prod el 2026-07-20 (HTTP 200 desde la IP pública, sin token).
   // Funciona con <img src="/uploads/..."> porque requireAuth lee la cookie `access_token`, que el
   // navegador envía sola en peticiones al mismo origen. cookieParser() ya corrió arriba.
-  app.use("/uploads", requireAuth, express.static(UPLOADS_DIR));
+  // Ruta dinámica (ya no express.static): lee de R2 primero cuando está habilitado, disco local
+  // como respaldo — mismo patrón "proxy autenticado, nunca URL firmada pública" que Drive.
+  app.get("/uploads/*", requireAuth, async (req, res) => {
+    const rel = decodeURIComponent(req.params[0] || "");
+    if (!rel || rel.includes("..") || rel.includes("\0")) { res.status(400).json({ error: "ruta_invalida" }); return; }
+    try {
+      const buf = await readUploadedFileBytes("/uploads/" + rel);
+      res.setHeader("Content-Type", guessContentType(rel));
+      res.setHeader("Content-Length", String(buf.length));
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.end(buf);
+    } catch {
+      res.status(404).json({ error: "not_found" });
+    }
+  });
 
   const uploadStorage = multer.diskStorage({
     destination: UPLOADS_DIR,

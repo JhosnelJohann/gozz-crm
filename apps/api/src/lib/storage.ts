@@ -6,6 +6,7 @@
 // Ver docs/PLAN-REORGANIZACION-UPLOADS-20260709.md §2 (arquitectura) y §5 (tabla de mapeo).
 import fs from "fs";
 import path from "path";
+import { r2Enabled, putObjectOverwrite, getObject } from "./object-store.js";
 
 // Raíz física de los uploads. Configurable por env con fallback a la ruta del VPS.
 export const UPLOADS_ROOT = process.env.UPLOADS_DIR || "/root/gozz-crm/data/uploads";
@@ -151,17 +152,59 @@ export function storagePathFor(modulo: StorageModulo, ids: StorageIds): StorageP
 }
 
 /**
- * Coloca un archivo recién subido (que multer dejó plano) en su carpeta organizada según
- * (modulo, ids) y devuelve la URL final para guardar en BD. Crea la carpeta bajo demanda y
- * MUEVE el archivo. `currentAbsPath` = ruta absoluta actual; `filename` = nombre a conservar.
+ * Deriva la key de R2 para una URL /uploads/... — es el propio sufijo, sin el prefijo.
+ * Mismo criterio que uploadUrlToAbsPath, para que el esquema de URLs no cambie nunca.
  */
-export function placeUploadedFile(
+export function r2KeyForUploadUrl(url: string): string {
+  return url.replace(/^\/uploads\//, "").split("?")[0];
+}
+
+/** Sube bytes ya en memoria a R2 bajo la key derivada de `url`. No-op si R2 no está configurado. */
+export async function putUploadedBytesToR2(url: string, buf: Buffer, contentType?: string): Promise<void> {
+  if (!r2Enabled) return;
+  await putObjectOverwrite(r2KeyForUploadUrl(url), buf, contentType);
+}
+
+/** Igual que putUploadedBytesToR2, leyendo los bytes desde un archivo ya en disco (p.ej. avatares). */
+export async function syncUploadedFileToR2(url: string, absPath: string, contentType?: string): Promise<void> {
+  if (!r2Enabled) return;
+  await putUploadedBytesToR2(url, await fs.promises.readFile(absPath), contentType);
+}
+
+/** Lee los bytes de un /uploads/...: R2 primero si está habilitado, disco local como respaldo. */
+export async function readUploadedFileBytes(url: string): Promise<Buffer> {
+  if (r2Enabled) {
+    try {
+      return await getObject(r2KeyForUploadUrl(url));
+    } catch (e: any) {
+      console.warn("[storage] R2 GET falló, fallback a disco:", e?.message);
+    }
+  }
+  return fs.promises.readFile(uploadUrlToAbsPath(url));
+}
+
+/**
+ * Coloca un archivo recién subido (que multer dejó plano) en su carpeta organizada según
+ * (modulo, ids) y devuelve la URL final para guardar en BD. Escribe a R2 primero cuando está
+ * habilitado (si falla, LANZA — a diferencia de Drive, estos módulos no tienen columna de
+ * tracking r2_key/local_path por fila; un guardado silencioso "solo local" funcionaría hasta el
+ * próximo redeploy de este servicio y luego desaparecería sin rastro, justo el bug que esto
+ * arregla). Después crea la carpeta local bajo demanda y MUEVE el archivo — disco local sigue
+ * sirviendo de caché/respaldo barato para lecturas. `currentAbsPath` = ruta absoluta actual;
+ * `filename` = nombre a conservar.
+ */
+export async function placeUploadedFile(
   currentAbsPath: string,
   modulo: StorageModulo,
   ids: StorageIds,
   filename: string,
-): string {
+): Promise<string> {
   const { dirAbs, urlPrefix } = storagePathFor(modulo, ids);
+  const url = urlPrefix + filename;
+  if (r2Enabled) {
+    const buf = await fs.promises.readFile(currentAbsPath);
+    await putUploadedBytesToR2(url, buf);
+  }
   fs.mkdirSync(dirAbs, { recursive: true });
   const destAbs = path.join(dirAbs, filename);
   try {
@@ -171,7 +214,7 @@ export function placeUploadedFile(
     fs.copyFileSync(currentAbsPath, destAbs);
     fs.unlinkSync(currentAbsPath);
   }
-  return urlPrefix + filename;
+  return url;
 }
 
 /**

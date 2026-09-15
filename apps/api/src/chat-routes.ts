@@ -125,7 +125,7 @@ export function registerChatRoutes(app: Express, upload: Multer) {
     const fname = archivo_url.replace(/^\/uploads\//, "");
     const flat = path.join(UPLOADS_DIR, fname);
     if (fs.existsSync(flat)) {
-      finalArchivoUrl = placeUploadedFile(flat, "chat_mensaje", { grupoId: String(req.params.id) }, fname);
+      finalArchivoUrl = await placeUploadedFile(flat, "chat_mensaje", { grupoId: String(req.params.id) }, fname);
     }
   }
   const rows = await query<any>(
@@ -764,7 +764,7 @@ export function registerChatRoutes(app: Express, upload: Multer) {
     const fname = avatarUrl.replace(/^\/uploads\//, "");
     const flat = path.join(UPLOADS_DIR, fname);
     if (fs.existsSync(flat)) {
-      avatarUrl = placeUploadedFile(flat, "chat_grupo_avatar", { grupoId: String(req.params.id) }, fname);
+      avatarUrl = await placeUploadedFile(flat, "chat_grupo_avatar", { grupoId: String(req.params.id) }, fname);
     }
   }
   const sets: string[] = []; const params: any[] = [];

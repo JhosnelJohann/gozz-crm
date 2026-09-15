@@ -159,7 +159,7 @@ export function registerWhatsAppRoutes(app: Express, upload: Multer) {
       const fname = d.archivoUrl.replace(/^\/uploads\//, "");
       const flat = path.join(UPLOADS_DIR, fname);
       if (fs.existsSync(flat)) {
-        d = { ...d, archivoUrl: placeUploadedFile(flat, "whatsapp_mensaje", { conversacionId: id }, fname) };
+        d = { ...d, archivoUrl: await placeUploadedFile(flat, "whatsapp_mensaje", { conversacionId: id }, fname) };
       }
     }
     const mensaje = await service.enviarMensaje(id, u.sub, d);

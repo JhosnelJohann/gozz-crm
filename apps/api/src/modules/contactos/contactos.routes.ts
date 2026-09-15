@@ -1368,12 +1368,12 @@ export function registerContactosRoutes(app: Express) {
     const files = (req.files as Express.Multer.File[] | undefined) || [];
     if (!contenido && files.length === 0) { res.status(400).json({ error: "Nota o archivo requerido" }); return; }
     const notaId = randomUUID();
-    const archivos = files.map((f) => ({
-      url: placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "contacto_nota", { contactoId: String(req.params.id), notaId }, f.filename),
+    const archivos = await Promise.all(files.map(async (f) => ({
+      url: await placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "contacto_nota", { contactoId: String(req.params.id), notaId }, f.filename),
       filename: f.originalname,
       mime: f.mimetype,
       size: f.size,
-    }));
+    })));
     const rows = await query<any>(
       `INSERT INTO gozz.contactos_notas (id, contacto_id, user_id, contenido, archivos)
        VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING *`,
@@ -1388,7 +1388,7 @@ export function registerContactosRoutes(app: Express) {
     const files = (req.files as Express.Multer.File[] | undefined) || [];
     let keep: any[] = [];
     try { const k = JSON.parse(String(req.body?.archivos_keep ?? "[]")); if (Array.isArray(k)) keep = k; } catch { keep = []; }
-    const nuevos = files.map((f) => ({ url: placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "contacto_nota", { contactoId: String(req.params.id), notaId: String(req.params.notaId) }, f.filename), filename: f.originalname, mime: f.mimetype, size: f.size }));
+    const nuevos = await Promise.all(files.map(async (f) => ({ url: await placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "contacto_nota", { contactoId: String(req.params.id), notaId: String(req.params.notaId) }, f.filename), filename: f.originalname, mime: f.mimetype, size: f.size })));
     const archivos = [...keep, ...nuevos];
     if (!contenido && archivos.length === 0) { res.status(400).json({ error: "Contenido o archivo requerido" }); return; }
     const n = (await query<any>(`SELECT user_id, archivos FROM gozz.contactos_notas WHERE id = $1 AND contacto_id = $2`, [String(req.params.notaId), String(req.params.id)]))[0];

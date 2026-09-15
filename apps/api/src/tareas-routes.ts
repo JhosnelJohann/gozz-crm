@@ -703,7 +703,7 @@ export function registerTareasRoutes(app: Express) {
     const u = (req as any).user;
     const f = (req as any).file;
     if (!f) { res.status(400).json({ error: "No file" }); return; }
-    const url = placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "tarea", { tareaId: String(req.params.id) }, f.filename);
+    const url = await placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "tarea", { tareaId: String(req.params.id) }, f.filename);
     const rows = await query<any>(
       `INSERT INTO gozz.tareas_archivos (tarea_id, filename, mime, size_bytes, url, uploaded_by)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,

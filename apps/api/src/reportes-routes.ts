@@ -708,13 +708,13 @@ export function registerReportesRoutes(app: Express) {
     }
 
     const pagoId = randomUUID();
-    const comprobantesArr = comprobantes.map((f) => ({
-      url: placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "pago_comprobante", { opId: String(req.params.id), pagoId }, f.filename),
+    const comprobantesArr = await Promise.all(comprobantes.map(async (f) => ({
+      url: await placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "pago_comprobante", { opId: String(req.params.id), pagoId }, f.filename),
       filename: f.originalname,
       mime: f.mimetype
-    }));
+    })));
     const comprobanteUrl = comprobantesArr[0]?.url ?? null;
-    const firmaUrl = firma ? placeUploadedFile(path.join(UPLOADS_DIR, firma.filename), "pago_firma", { opId: String(req.params.id), pagoId }, firma.filename) : null;
+    const firmaUrl = firma ? await placeUploadedFile(path.join(UPLOADS_DIR, firma.filename), "pago_firma", { opId: String(req.params.id), pagoId }, firma.filename) : null;
 
     const rows = await query<any>(
       `INSERT INTO gozz.oportunidades_pagos
@@ -817,7 +817,7 @@ export function registerReportesRoutes(app: Express) {
     if (files.length === 0) { res.status(400).json({ error: "No se adjuntaron documentos" }); return; }
     const pago = (await query<any>("SELECT id FROM gozz.oportunidades_pagos WHERE id = $1 AND oportunidad_id = $2", [req.params.pagoId, req.params.id]))[0];
     if (!pago) { res.status(404).json({ error: "Pago no encontrado" }); return; }
-    const nuevos = files.map((f) => ({ url: placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "pago_documento", { opId: String(req.params.id), pagoId: String(req.params.pagoId) }, f.filename), filename: f.originalname, mime: f.mimetype, uploaded_at: new Date().toISOString(), uploaded_by: u.sub }));
+    const nuevos = await Promise.all(files.map(async (f) => ({ url: await placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "pago_documento", { opId: String(req.params.id), pagoId: String(req.params.pagoId) }, f.filename), filename: f.originalname, mime: f.mimetype, uploaded_at: new Date().toISOString(), uploaded_by: u.sub })));
     const rows = await query<any>(
       `UPDATE gozz.oportunidades_pagos
          SET documentos_adicionales = COALESCE(documentos_adicionales, '[]'::jsonb) || $1::jsonb
@@ -866,7 +866,7 @@ export function registerReportesRoutes(app: Express) {
     const oldUrl = String(req.body?.url || "");
     const file = (req as any).file as Express.Multer.File | undefined;
     if (!oldUrl || !file) { res.status(400).json({ error: "Falta url o archivo" }); return; }
-    const nuevo = { url: placeUploadedFile(path.join(UPLOADS_DIR, file.filename), "pago_comprobante", { opId: String(req.params.id), pagoId: String(req.params.pagoId) }, file.filename), filename: file.originalname, mime: file.mimetype };
+    const nuevo = { url: await placeUploadedFile(path.join(UPLOADS_DIR, file.filename), "pago_comprobante", { opId: String(req.params.id), pagoId: String(req.params.pagoId) }, file.filename), filename: file.originalname, mime: file.mimetype };
     const pago = (await query<any>("SELECT * FROM gozz.oportunidades_pagos WHERE id = $1 AND oportunidad_id = $2", [req.params.pagoId, req.params.id]))[0];
     if (!pago) { res.status(404).json({ error: "Pago no encontrado" }); return; }
     const comps: any[] = Array.isArray(pago.comprobantes_urls) ? pago.comprobantes_urls : [];
@@ -926,7 +926,7 @@ export function registerReportesRoutes(app: Express) {
 
     const solId = randomUUID();
     const file = (req as any).file as Express.Multer.File | undefined;
-    const comprobantePropuesto = file ? { url: placeUploadedFile(path.join(UPLOADS_DIR, file.filename), "pago_solicitud", { opId: String(req.params.id), pagoId: String(req.params.pagoId), solId }, file.filename), filename: file.originalname, mime: file.mimetype } : null;
+    const comprobantePropuesto = file ? { url: await placeUploadedFile(path.join(UPLOADS_DIR, file.filename), "pago_solicitud", { opId: String(req.params.id), pagoId: String(req.params.pagoId), solId }, file.filename), filename: file.originalname, mime: file.mimetype } : null;
     const comprobanteModo = (b.comprobante_modo === "reemplazar" || b.comprobante_modo === "adicional") ? b.comprobante_modo : (file ? "adicional" : null);
 
     const rows = await query<any>(
@@ -1081,12 +1081,12 @@ export function registerReportesRoutes(app: Express) {
     const files = (req.files as Express.Multer.File[] | undefined) || [];
     if (!contenido && files.length === 0) { res.status(400).json({ error: "Nota o archivo requerido" }); return; }
     const notaId = randomUUID();
-    const archivos = files.map((f) => ({
-      url: placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "oportunidad_nota", { opId: String(req.params.id), notaId }, f.filename),
+    const archivos = await Promise.all(files.map(async (f) => ({
+      url: await placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "oportunidad_nota", { opId: String(req.params.id), notaId }, f.filename),
       filename: f.originalname,
       mime: f.mimetype,
       size: f.size
-    }));
+    })));
     const rows = await query<any>(
       `INSERT INTO gozz.oportunidades_notas (id, oportunidad_id, user_id, contenido, archivos)
        VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING *`,
@@ -1101,7 +1101,7 @@ export function registerReportesRoutes(app: Express) {
     const files = (req.files as Express.Multer.File[] | undefined) || [];
     let keep: any[] = [];
     try { const k = JSON.parse(String(req.body?.archivos_keep ?? "[]")); if (Array.isArray(k)) keep = k; } catch { keep = []; }
-    const nuevos = files.map((f) => ({ url: placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "oportunidad_nota", { opId: String(req.params.id), notaId: String(req.params.notaId) }, f.filename), filename: f.originalname, mime: f.mimetype, size: f.size }));
+    const nuevos = await Promise.all(files.map(async (f) => ({ url: await placeUploadedFile(path.join(UPLOADS_DIR, f.filename), "oportunidad_nota", { opId: String(req.params.id), notaId: String(req.params.notaId) }, f.filename), filename: f.originalname, mime: f.mimetype, size: f.size })));
     const archivos = [...keep, ...nuevos];
     if (!contenido && archivos.length === 0) { res.status(400).json({ error: "La nota no puede quedar vacía" }); return; }
     const prevNota = (await query<any>("SELECT archivos FROM gozz.oportunidades_notas WHERE id = $1 AND oportunidad_id = $2", [req.params.notaId, req.params.id]))[0];

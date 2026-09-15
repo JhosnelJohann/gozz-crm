@@ -64,7 +64,7 @@ export function registerAIProxy(app: Express) {
         const base = path.basename(f.originalname || "documento", ext).replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60);
         const storedName = `${Date.now()}_${base}${ext}`;
         try {
-          const url = placeUploadedFile(f.path, "oportunidad_ia", { opId: req.body.oportunidad_id }, storedName);
+          const url = await placeUploadedFile(f.path, "oportunidad_ia", { opId: req.body.oportunidad_id }, storedName);
           stored = { url, filename: f.originalname, mime: f.mimetype, size: f.size };
         } catch (e) {
           // if move fails, just skip persistence

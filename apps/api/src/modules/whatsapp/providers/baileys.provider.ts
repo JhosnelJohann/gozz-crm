@@ -15,7 +15,7 @@ import pino from "pino";
 import path from "path";
 import fs from "fs";
 import type { WhatsAppMensajeEstado } from "@gozz/shared-types";
-import { UPLOADS_ROOT, shard, uploadUrlToAbsPath } from "../../../lib/storage.js";
+import { UPLOADS_ROOT, shard, readUploadedFileBytes, putUploadedBytesToR2 } from "../../../lib/storage.js";
 import { usePostgresAuthState, clearAuthState } from "./postgres-auth-state.js";
 import type {
   WhatsAppProvider,
@@ -221,6 +221,12 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
         archivoUrl = `/uploads/${dirRel}/${filename}`;
         archivoNombre = media.nombre || filename;
         archivoTipo = guessMime(filename);
+        // Best-effort: si R2 falla acá NO se descarta el mensaje entrante (a diferencia de las
+        // subidas por HTTP en lib/storage.ts, que fallan ruidoso) — queda solo en disco local de
+        // este servicio hasta el próximo redeploy, mejor que perder el mensaje completo.
+        putUploadedBytesToR2(archivoUrl, buffer).catch((e: any) =>
+          console.error(`[baileys ${conexionId}] no se pudo subir el adjunto a R2 (queda solo en disco local):`, e?.message)
+        );
       } catch (e: any) {
         console.error(`[baileys ${conexionId}] no se pudo descargar el adjunto de ${waMessageId}:`, e?.message);
       }
@@ -264,7 +270,9 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
     if (msg.tipo === "texto") {
       content = { text: msg.contenido || "" };
     } else if (msg.archivoUrl) {
-      const buffer = fs.readFileSync(uploadUrlToAbsPath(msg.archivoUrl));
+      // R2 primero (adjunto puede haber sido subido por el servicio `api`, no por este worker —
+      // filesystems ephemeral separados en Railway), disco local como respaldo.
+      const buffer = await readUploadedFileBytes(msg.archivoUrl);
       const filename = path.basename(msg.archivoUrl);
       if (msg.tipo === "imagen") content = { image: buffer, caption: msg.contenido || undefined };
       else if (msg.tipo === "video") content = { video: buffer, caption: msg.contenido || undefined };
