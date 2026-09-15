@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import type { LoginResponse, AuthMeResponse } from "@gozz/shared-types";
 import { requireAuth } from "../../shared/auth-middleware.js";
-import { COOKIE_SECURE } from "../../shared/env.js";
+import { COOKIE_SECURE, COOKIE_DOMAIN } from "../../shared/env.js";
 import { LoginSchema } from "./auth.schemas.js";
 import * as authService from "./auth.service.js";
 
@@ -26,6 +26,7 @@ export function registerAuthRoutes(app: Express) {
       secure: COOKIE_SECURE,
       maxAge: 60 * 60 * 24 * 365 * 1000, // 365 dias — CRM interno, sesion permanente
       path: "/",
+      ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
     });
     const body: LoginResponse = { success: true, user: result.user };
     res.json(body);
@@ -42,7 +43,7 @@ export function registerAuthRoutes(app: Express) {
   app.post("/api/auth/logout", async (req, res) => {
     const u = (req as any).user;
     await authService.logout(u?.sub);
-    res.clearCookie("access_token", { path: "/" });
+    res.clearCookie("access_token", { path: "/", ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}) });
     res.json({ success: true });
   });
 
