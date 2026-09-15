@@ -26,6 +26,12 @@ import type {
 
 const logger = pino({ level: process.env.WHATSAPP_LOG_LEVEL || "silent" });
 
+/** Mayor que el timeout de 25s del modal del frontend y que el connectTimeoutMs interno de
+ * Baileys (20s) — si ninguno de los dos disparó un evento (qr/open/close) para entonces, algo se
+ * colgó silenciosamente (p. ej. el handshake con los servidores de WhatsApp) y hay que forzar el
+ * cierre para no dejar `connect()` bloqueado para siempre en esa conexión. */
+const CONNECT_WATCHDOG_MS = 40_000;
+
 const EXT_MIME: Record<string, string> = {
   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
   ".mp4": "video/mp4", ".mov": "video/quicktime",
@@ -63,6 +69,9 @@ function estadoDesdeStatus(status: number | null | undefined): WhatsAppMensajeEs
 
 export class BaileysWhatsAppProvider implements WhatsAppProvider {
   private sockets = new Map<string, WASocket>();
+  /** Watchdog por conexión (ver CONNECT_WATCHDOG_MS) — se cancela en cuanto llega el primer
+   * evento definitivo (qr/open/close) o si `disconnect()` se adelanta. */
+  private connectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private qrCbs: ((conexionId: string, qr: string) => void)[] = [];
   private stateCbs: ((conexionId: string, update: WhatsAppConnectionUpdate) => void)[] = [];
   private msgCbs: ((conexionId: string, msg: WhatsAppIncomingMessage) => void)[] = [];
@@ -103,7 +112,12 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
   async connect(conexionId: string): Promise<void> {
     if (this.sockets.has(conexionId)) return;
     const { state, saveCreds } = await usePostgresAuthState(conexionId);
-    const { version } = await fetchLatestBaileysVersion();
+    // { timeout: 5000 }: sin esto, axios no tiene límite de tiempo y esta petición a GitHub
+    // puede colgarse indefinidamente si el egress de Railway es lento — dejando "Conectar
+    // WhatsApp" atascado para siempre sin emitir ni un solo evento. La librería ya cae a su
+    // versión empaquetada ante cualquier error (incluido un timeout), así que esto es puramente
+    // aditivo.
+    const { version } = await fetchLatestBaileysVersion({ timeout: 5000 });
 
     const sock = makeWASocket({
       version,
@@ -115,10 +129,21 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
     });
     this.sockets.set(conexionId, sock);
 
+    const watchdog = setTimeout(() => {
+      this.connectTimers.delete(conexionId);
+      if (this.sockets.get(conexionId) !== sock) return; // ya se resolvió, se reemplazó o se desconectó
+      sock.end(new Error("Tiempo de espera agotado esperando respuesta de WhatsApp"));
+    }, CONNECT_WATCHDOG_MS);
+    this.connectTimers.set(conexionId, watchdog);
+
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", (update) => {
       const { connection, lastDisconnect, qr } = update;
+      if (qr || connection === "open" || connection === "close") {
+        const t = this.connectTimers.get(conexionId);
+        if (t) { clearTimeout(t); this.connectTimers.delete(conexionId); }
+      }
       if (qr) this.qrCbs.forEach((cb) => cb(conexionId, qr));
 
       if (connection === "open") {
@@ -254,10 +279,20 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
   }
 
   async disconnect(conexionId: string): Promise<void> {
+    const t = this.connectTimers.get(conexionId);
+    if (t) { clearTimeout(t); this.connectTimers.delete(conexionId); }
     const sock = this.sockets.get(conexionId);
     this.sockets.delete(conexionId);
     if (!sock) return;
-    try { await sock.logout(); } catch { /* ya pudo estar cerrado */ }
+    try {
+      // Acotado: sock.logout() puede colgarse si el transporte ya está en mal estado (el
+      // timeout interno de Baileys para esto es 60s) — sin límite, deja un socket zombie vivo
+      // en el proceso del worker en vez de liberarlo de inmediato.
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Tiempo de espera agotado cerrando sesión")), 7000);
+        sock.logout().then(() => { clearTimeout(timer); resolve(); }, (e) => { clearTimeout(timer); reject(e); });
+      });
+    } catch { /* ya pudo estar cerrado, o no respondió a tiempo */ }
     try { sock.end(undefined); } catch {}
     await clearAuthState(conexionId);
   }
