@@ -8,6 +8,7 @@ import { FileMessage } from "@/components/chat/FileMessage";
 import { AudioMessage } from "@/components/chat/AudioMessage";
 import { ConversationComposer } from "./ConversationComposer";
 import { WhatsAppAvatar } from "./WhatsAppAvatar";
+import { AsignadoPicker, type UsuarioAsignable } from "./AsignadoPicker";
 import { formatearNumeroWhatsApp } from "@/lib/whatsapp-numero";
 import type { WhatsAppConversacionDetalle, WhatsAppMensaje, WhatsAppPipelineStage, WhatsAppTag } from "./types";
 
@@ -229,6 +230,7 @@ interface Props {
   mensajes: WhatsAppMensaje[] | null;
   etapas: WhatsAppPipelineStage[];
   tags: WhatsAppTag[];
+  usuarios: UsuarioAsignable[];
   conectado: boolean;
   hasMore?: boolean;
   loadingOlder?: boolean;
@@ -237,14 +239,15 @@ interface Props {
   onSend: (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number }) => Promise<void>;
   onRetry?: (m: WhatsAppMensaje) => void;
   onCambiarEtapa: (etapaId: string) => void;
+  onAsignar: (userId: string | null) => void;
   onToggleTag: (tag: WhatsAppTag) => void;
   onCrearTag: (nombre: string, color: string) => Promise<void>;
   onAbrirPerfil: () => void;
 }
 
 export function ConversationThread({
-  conversacion, mensajes, etapas, tags, conectado, hasMore = false, loadingOlder = false, onLoadOlder,
-  onBack, onSend, onRetry, onCambiarEtapa, onToggleTag, onCrearTag, onAbrirPerfil,
+  conversacion, mensajes, etapas, tags, usuarios, conectado, hasMore = false, loadingOlder = false, onLoadOlder,
+  onBack, onSend, onRetry, onCambiarEtapa, onAsignar, onToggleTag, onCrearTag, onAbrirPerfil,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Ancla de scroll para el historial anterior (evita el "salto" al prepender mensajes viejos).
@@ -313,6 +316,7 @@ export function ConversationThread({
             <div className="text-[10px] text-neutral-500 truncate">{numeroConBandera(conversacion.telefono_real || conversacion.wa_jid)}</div>
           </div>
         </button>
+        <AsignadoPicker usuarios={usuarios} valor={conversacion.asignado_a} onChange={onAsignar} />
         <TagPicker todas={tags} activas={conversacion.tags} onToggle={onToggleTag} onCrear={onCrearTag} />
         <StagePicker etapas={etapas} valor={conversacion.etapa_id} onChange={onCambiarEtapa} />
       </div>

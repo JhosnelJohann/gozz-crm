@@ -11,6 +11,7 @@ import { WhatsappLogo } from "@/lib/bootstrap-icons";
 import { ConnectionSwitcher } from "@/components/whatsapp/ConnectionSwitcher";
 import { ConnectWhatsAppModal } from "@/components/whatsapp/ConnectWhatsAppModal";
 import { ConversationList, type ConversacionItem } from "@/components/whatsapp/ConversationList";
+import type { UsuarioAsignable } from "@/components/whatsapp/AsignadoPicker";
 import { ConversationThread } from "@/components/whatsapp/ConversationThread";
 import { PerfilConversacionModal } from "@/components/whatsapp/PerfilConversacionModal";
 import { VincularContactoModal } from "@/components/whatsapp/VincularContactoModal";
@@ -57,6 +58,11 @@ function WhatsAppPageInner() {
   const [etapas, setEtapas] = useState<WhatsAppPipelineStage[]>([]);
   const [tags, setTags] = useState<WhatsAppTag[]>([]);
   const [etapaFiltro, setEtapaFiltro] = useState<string | null>(null);
+  const [tagFiltro, setTagFiltro] = useState<string | null>(null);
+  const [soloAsignadasAMi, setSoloAsignadasAMi] = useState(false);
+  const [busqueda, setBusqueda] = useState("");
+  const [busquedaDebounced, setBusquedaDebounced] = useState("");
+  const [usuarios, setUsuarios] = useState<UsuarioAsignable[]>([]);
   const [conversaciones, setConversaciones] = useState<ConversacionItem[] | null>(null);
   const [loadingConv, setLoadingConv] = useState(false);
   const [activeConversacion, setActiveConversacion] = useState<WhatsAppConversacionDetalle | null>(null);
@@ -104,12 +110,24 @@ function WhatsAppPageInner() {
     } catch { /* no crítico para el primer render */ }
   };
 
+  const loadUsuarios = async () => {
+    try {
+      const r = await fetch("/api/users");
+      if (!r.ok) return;
+      const d = await r.json();
+      setUsuarios((d.users || []).filter((u: any) => u.activo !== false));
+    } catch { /* no crítico para el primer render */ }
+  };
+
   const loadConversaciones = async (opts?: { silent?: boolean }) => {
     if (!activeConexionId) { setConversaciones([]); return; }
     if (!opts?.silent) setLoadingConv(true);
     try {
       const params = new URLSearchParams();
       if (etapaFiltro) params.set("etapa", etapaFiltro);
+      if (tagFiltro) params.set("tag", tagFiltro);
+      if (soloAsignadasAMi) params.set("asignado", "me");
+      if (busquedaDebounced.trim()) params.set("q", busquedaDebounced.trim());
       const r = await fetch(`/api/whatsapp/conexiones/${activeConexionId}/conversaciones?${params.toString()}`);
       if (!r.ok) return;
       const d = await r.json();
@@ -196,7 +214,13 @@ function WhatsAppPageInner() {
     setMensajes((cur) => cur ? cur.map((m) => (m.direccion === "entrante" && !m.visto_at) ? { ...m, visto_at: ahora } : m) : cur);
   };
 
-  useEffect(() => { loadConexiones(); loadEtapasYTags(); }, []);
+  useEffect(() => { loadConexiones(); loadEtapasYTags(); loadUsuarios(); }, []);
+
+  // Debounce del buscador (350ms) — evita una petición por cada tecla.
+  useEffect(() => {
+    const t = setTimeout(() => setBusquedaDebounced(busqueda), 350);
+    return () => clearTimeout(t);
+  }, [busqueda]);
 
   // Al cambiar de conexión o de filtro se limpia la conversación abierta — SALVO cuando el
   // cambio de conexión lo disparó abrir un enlace directo (`?conversacion=`, ver más abajo), que
@@ -207,7 +231,7 @@ function WhatsAppPageInner() {
     loadConversaciones();
     if (saltarProximoResetRef.current) saltarProximoResetRef.current = false;
     else { setActiveConversacion(null); setMensajes(null); }
-  }, [activeConexionId, etapaFiltro]);
+  }, [activeConexionId, etapaFiltro, tagFiltro, soloAsignadasAMi, busquedaDebounced]);
 
   // "Contactar por WhatsApp" desde /contactos/[id] llega aquí como `?conversacion=<id>` — abrirla
   // directo, sin depender del filtro de etapa actual, y limpiar la URL para que un refresco no la
@@ -378,6 +402,15 @@ function WhatsAppPageInner() {
     if (r.ok) { setActiveConversacion((c) => c ? { ...c, etapa_id: etapaId } : c); loadConversaciones({ silent: true }); }
   };
 
+  const asignar = async (userId: string | null) => {
+    if (!activeConversacion) return;
+    const r = await fetch(`/api/whatsapp/conversaciones/${activeConversacion.id}/asignar`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ asignado_a: userId }),
+    });
+    if (r.ok) { setActiveConversacion((c) => c ? { ...c, asignado_a: userId } : c); loadConversaciones({ silent: true }); }
+    else toast.error("No se pudo asignar la conversación");
+  };
+
   const toggleTag = async (t: WhatsAppTag) => {
     if (!activeConversacion) return;
     const yaTiene = activeConversacion.tags.some((x) => x.id === t.id);
@@ -452,9 +485,16 @@ function WhatsAppPageInner() {
           <ConversationList
             conversaciones={conversaciones}
             etapas={etapas}
+            tags={tags}
             selectedId={activeConversacion?.id ?? null}
             etapaFiltro={etapaFiltro}
             onEtapaFiltroChange={setEtapaFiltro}
+            tagFiltro={tagFiltro}
+            onTagFiltroChange={setTagFiltro}
+            soloAsignadasAMi={soloAsignadasAMi}
+            onToggleSoloAsignadasAMi={() => setSoloAsignadasAMi((v) => !v)}
+            busqueda={busqueda}
+            onBusquedaChange={setBusqueda}
             onSelect={seleccionarConversacion}
             loading={loadingConv}
           />
@@ -467,6 +507,7 @@ function WhatsAppPageInner() {
               mensajes={mensajes}
               etapas={etapas}
               tags={tags}
+              usuarios={usuarios}
               conectado={activeConexion?.estado === "conectado"}
               hasMore={hasMoreMensajes}
               loadingOlder={loadingOlderMensajes}
@@ -475,6 +516,7 @@ function WhatsAppPageInner() {
               onSend={enviarMensaje}
               onRetry={reintentarMensaje}
               onCambiarEtapa={cambiarEtapa}
+              onAsignar={asignar}
               onToggleTag={toggleTag}
               onCrearTag={crearTag}
               onAbrirPerfil={() => setPerfilOpen(true)}

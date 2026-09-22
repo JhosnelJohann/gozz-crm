@@ -223,7 +223,11 @@ export interface FiltrosConversaciones {
   q?: string;
 }
 
-export type WhatsAppConversacionConTags = WhatsAppConversacion & { tags: WhatsAppTag[] };
+export type WhatsAppConversacionConTags = WhatsAppConversacion & {
+  tags: WhatsAppTag[];
+  asignado_nombre: string | null;
+  asignado_foto_url: string | null;
+};
 
 /**
  * Trae las etiquetas de cada conversación con una sub-consulta correlacionada en la MISMA query
@@ -251,8 +255,11 @@ export async function listConversaciones(conexionId: string, filtros: FiltrosCon
           JOIN gozz.whatsapp_tags t ON t.id = ct.tag_id
           WHERE ct.conversacion_id = c.id),
          '[]'::jsonb
-       ) AS tags
+       ) AS tags,
+       ua.nombre AS asignado_nombre,
+       ua.foto_perfil_url AS asignado_foto_url
      FROM gozz.whatsapp_conversaciones c
+     LEFT JOIN gozz.users ua ON ua.id = c.asignado_a
      WHERE ${cond.join(" AND ")}
      ORDER BY c.ultimo_mensaje_at DESC NULLS LAST, c.created_at DESC`,
     params
