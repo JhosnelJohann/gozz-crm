@@ -32,6 +32,7 @@ export interface WhatsAppMensaje {
   archivo_url: string | null;
   archivo_nombre: string | null;
   archivo_tipo: string | null;
+  archivo_tamanio: number | null;
   estado_entrega: "pendiente" | "enviado" | "entregado" | "leido" | "fallido";
   created_at: string;
   visto_at: string | null;

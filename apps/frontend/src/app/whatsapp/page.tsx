@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
@@ -16,6 +16,31 @@ import { VincularContactoModal } from "@/components/whatsapp/VincularContactoMod
 import { ConvertToOportunidadModal } from "@/components/whatsapp/ConvertToOportunidadModal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import type { WhatsAppConexion, WhatsAppConversacionDetalle, WhatsAppMensaje, WhatsAppPipelineStage, WhatsAppTag } from "@/components/whatsapp/types";
+
+const WHATSAPP_PAGE_SIZE = 50;
+
+// Mezcla el lote recién traído del servidor con lo que ya hay cargado, sin perder el historial
+// viejo que el usuario haya subido a buscar por scroll-up. Deduplica por id (prefiere la versión
+// del servidor, que trae el estado de entrega más fresco) y ordena por fecha — mismo patrón que
+// `mergeMensajes` de `app/chat/page.tsx`.
+function mergeMensajes(prev: WhatsAppMensaje[], incoming: WhatsAppMensaje[]): WhatsAppMensaje[] {
+  if (!prev.length) return incoming;
+  const byId = new Map<string, WhatsAppMensaje>();
+  for (const m of prev) byId.set(m.id, m);
+  for (const m of incoming) byId.set(m.id, m);
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+}
+
+function previewDe(msg: { contenido?: string | null; tipo: string }): string {
+  if (msg.contenido) return msg.contenido;
+  if (msg.tipo === "imagen") return "📷 Imagen";
+  if (msg.tipo === "video") return "🎥 Video";
+  if (msg.tipo === "audio") return "🎤 Audio";
+  if (msg.tipo === "archivo") return "📎 Archivo";
+  return "";
+}
 
 export default function WhatsAppPage() {
   return (
@@ -35,6 +60,11 @@ function WhatsAppPageInner() {
   const [loadingConv, setLoadingConv] = useState(false);
   const [activeConversacion, setActiveConversacion] = useState<WhatsAppConversacionDetalle | null>(null);
   const [mensajes, setMensajes] = useState<WhatsAppMensaje[] | null>(null);
+  const [hasMoreMensajes, setHasMoreMensajes] = useState(false);
+  const [loadingOlderMensajes, setLoadingOlderMensajes] = useState(false);
+  const loadingOlderMensajesRef = useRef(false);
+  const conversacionesRef = useRef<ConversacionItem[] | null>(null);
+  conversacionesRef.current = conversaciones;
 
   const [connectOpen, setConnectOpen] = useState(false);
   const [perfilOpen, setPerfilOpen] = useState(false);
@@ -88,11 +118,65 @@ function WhatsAppPageInner() {
 
   const loadMensajes = async (id: string) => {
     setMensajes(null);
+    setHasMoreMensajes(false);
+    loadingOlderMensajesRef.current = false;
+    setLoadingOlderMensajes(false);
     const r = await fetch(`/api/whatsapp/conversaciones/${id}/mensajes`);
     if (!r.ok) return;
     const d = await r.json();
-    setMensajes(d.mensajes || []);
+    const msgs: WhatsAppMensaje[] = d.mensajes || [];
+    setMensajes(msgs);
+    setHasMoreMensajes(msgs.length >= WHATSAPP_PAGE_SIZE);
     marcarVistos(id);
+  };
+
+  // Scroll-up: trae los mensajes anteriores al más antiguo cargado (cursor `before`, ya soportado
+  // por el backend pero nunca usado desde aquí — el historial estaba limitado a los últimos 50).
+  const loadMensajesAnteriores = useCallback(async () => {
+    if (!activeConversacion || loadingOlderMensajesRef.current) return;
+    const masViejo = mensajes?.[0];
+    if (!masViejo) return;
+    loadingOlderMensajesRef.current = true;
+    setLoadingOlderMensajes(true);
+    try {
+      const r = await fetch(`/api/whatsapp/conversaciones/${activeConversacion.id}/mensajes?before=${encodeURIComponent(masViejo.created_at)}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      const anteriores: WhatsAppMensaje[] = Array.isArray(d.mensajes) ? d.mensajes : [];
+      if (anteriores.length) setMensajes((cur) => mergeMensajes(cur || [], anteriores));
+      setHasMoreMensajes(anteriores.length >= WHATSAPP_PAGE_SIZE);
+    } catch {
+      // silencioso: el usuario puede reintentar scrolleando de nuevo
+    } finally {
+      loadingOlderMensajesRef.current = false;
+      setLoadingOlderMensajes(false);
+    }
+  }, [activeConversacion, mensajes]);
+
+  // Actualiza en memoria la vista previa de UNA conversación de la lista (último mensaje, hora, no
+  // leídos) sin volver a pedirle nada al servidor — la reordena al tope, igual que hace el propio
+  // ORDER BY del backend con el mensaje más reciente. Devuelve false si esa conversación no está
+  // en la página actual (filtrada, o recién creada): ese es el único caso que sí amerita recargar.
+  const patchConversacionPreview = (
+    conversacionId: string,
+    msg: { contenido?: string | null; tipo: string; direccion: "entrante" | "saliente"; created_at: string },
+    opts?: { incrementarNoLeidos?: boolean }
+  ): boolean => {
+    if (!conversacionesRef.current?.some((c) => c.id === conversacionId)) return false;
+    setConversaciones((cur) => {
+      if (!cur) return cur;
+      const i = cur.findIndex((c) => c.id === conversacionId);
+      if (i === -1) return cur;
+      const actualizada: ConversacionItem = {
+        ...cur[i],
+        ultimo_mensaje_preview: previewDe(msg),
+        ultimo_mensaje_at: msg.created_at,
+        ultimo_mensaje_direccion: msg.direccion,
+        no_leidos_count: opts?.incrementarNoLeidos ? cur[i].no_leidos_count + 1 : cur[i].no_leidos_count,
+      };
+      return [actualizada, ...cur.slice(0, i), ...cur.slice(i + 1)];
+    });
+    return true;
   };
 
   // "Visto por el equipo": el servidor ya lo marca en la base al llamar "leer" — esto solo
@@ -167,9 +251,19 @@ function WhatsAppPageInner() {
       setConexiones((cur) => cur.map((c) => c.id === ev.conexion_id ? { ...c, estado: ev.estado, telefono: ev.telefono || c.telefono, ultimo_error: ev.error || null } : c));
     };
     const onMensaje = (ev: any) => {
-      if (ev.conexion_id === activeConexionIdRef.current) loadConversaciones({ silent: true });
+      if (ev.conexion_id === activeConexionIdRef.current) {
+        const esActiva = ev.conversacion_id === activeConversacionIdRef.current;
+        // Antes: recargaba TODA la lista de conversaciones por cada mensaje que llegaba — con la
+        // bandeja abierta y varios mensajes seguidos, eso se sentía como el "delay" reportado.
+        // Ahora se parcha en memoria solo la fila que cambió; solo si no está en la página actual
+        // (conversación nueva, o filtrada) se recurre al servidor.
+        const parchada = patchConversacionPreview(ev.conversacion_id, ev.mensaje, {
+          incrementarNoLeidos: ev.mensaje.direccion === "entrante" && !esActiva,
+        });
+        if (!parchada) loadConversacionesRef.current({ silent: true });
+      }
       if (ev.conversacion_id === activeConversacionIdRef.current) {
-        setMensajes((cur) => cur ? [...cur, ev.mensaje] : [ev.mensaje]);
+        setMensajes((cur) => mergeMensajes(cur || [], [ev.mensaje]));
         marcarVistos(ev.conversacion_id);
       }
     };
@@ -212,15 +306,60 @@ function WhatsAppPageInner() {
     setConversaciones((cur) => cur ? cur.map((x) => x.id === c.id ? { ...x, no_leidos_count: 0 } : x) : cur);
   };
 
-  const enviarMensaje = async (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string }) => {
+  const enviarMensaje = async (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number }) => {
     if (!activeConversacion) return;
-    const r = await fetch(`/api/whatsapp/conversaciones/${activeConversacion.id}/mensajes`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d),
-    });
-    const dd = await r.json();
-    if (!r.ok) throw new Error(dd.error || "No se pudo enviar");
-    setMensajes((cur) => cur ? [...cur, dd.mensaje] : [dd.mensaje]);
-    loadConversaciones({ silent: true });
+    // Envío optimista: la burbuja aparece de inmediato con estado "pendiente" (como WhatsApp Web)
+    // en vez de esperar la respuesta del servidor, y se reconcilia (o se marca "fallido") después.
+    const conversacionId = activeConversacion.id;
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const optimista: WhatsAppMensaje = {
+      id: tempId,
+      conversacion_id: conversacionId,
+      wa_message_id: null,
+      direccion: "saliente",
+      tipo: d.tipo as WhatsAppMensaje["tipo"],
+      contenido: d.contenido ?? null,
+      archivo_url: d.archivoUrl ?? null,
+      archivo_nombre: d.archivoNombre ?? null,
+      archivo_tipo: null,
+      archivo_tamanio: d.archivoTamanio ?? null,
+      estado_entrega: "pendiente",
+      created_at: new Date().toISOString(),
+      visto_at: null,
+      visto_por: null,
+    };
+    setMensajes((cur) => cur ? [...cur, optimista] : [optimista]);
+    try {
+      const r = await fetch(`/api/whatsapp/conversaciones/${conversacionId}/mensajes`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d),
+      });
+      const dd = await r.json();
+      if (!r.ok) throw new Error(dd.error || "No se pudo enviar");
+      setMensajes((cur) => cur ? cur.map((m) => (m.id === tempId ? dd.mensaje : m)) : [dd.mensaje]);
+      // `enviarMensaje` (backend) no emite whatsapp:mensaje por socket (ese evento es solo para lo
+      // entrante) — la propia vista previa de la lista se parcha aquí mismo, sin ida al servidor.
+      if (!patchConversacionPreview(conversacionId, dd.mensaje, {})) loadConversaciones({ silent: true });
+    } catch (e) {
+      setMensajes((cur) => cur ? cur.map((m) => (m.id === tempId ? { ...m, estado_entrega: "fallido" as const } : m)) : cur);
+      throw e;
+    }
+  };
+
+  // Reintentar un mensaje fallido reutiliza el mismo endpoint de envío (no existe uno de
+  // "reintentar" aparte) y reemplaza la burbuja fallida por el intento nuevo.
+  const reintentarMensaje = async (m: WhatsAppMensaje) => {
+    try {
+      await enviarMensaje({
+        tipo: m.tipo,
+        contenido: m.contenido ?? undefined,
+        archivoUrl: m.archivo_url ?? undefined,
+        archivoNombre: m.archivo_nombre ?? undefined,
+        archivoTamanio: m.archivo_tamanio ?? undefined,
+      });
+      setMensajes((cur) => cur ? cur.filter((x) => x.id !== m.id) : cur);
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo reintentar el envío");
+    }
   };
 
   const cambiarEtapa = async (etapaId: string) => {
@@ -321,8 +460,12 @@ function WhatsAppPageInner() {
               etapas={etapas}
               tags={tags}
               conectado={activeConexion?.estado === "conectado"}
+              hasMore={hasMoreMensajes}
+              loadingOlder={loadingOlderMensajes}
+              onLoadOlder={loadMensajesAnteriores}
               onBack={() => setActiveConversacion(null)}
               onSend={enviarMensaje}
+              onRetry={reintentarMensaje}
               onCambiarEtapa={cambiarEtapa}
               onToggleTag={toggleTag}
               onCrearTag={crearTag}

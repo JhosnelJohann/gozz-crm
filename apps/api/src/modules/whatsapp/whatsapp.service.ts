@@ -289,7 +289,7 @@ export async function abrirConversacionConContacto(contactoId: string, conexionI
 export async function enviarMensaje(
   conversacionId: string,
   userId: string,
-  d: { tipo: string; contenido?: string | null; archivoUrl?: string | null; archivoNombre?: string | null }
+  d: { tipo: string; contenido?: string | null; archivoUrl?: string | null; archivoNombre?: string | null; archivoTamanio?: number | null }
 ) {
   const conversacion = await repo.getConversacion(conversacionId);
   if (!conversacion) throw new Error("Conversación no encontrada");
@@ -301,6 +301,7 @@ export async function enviarMensaje(
     contenido: d.contenido ?? null,
     archivoUrl: d.archivoUrl ?? null,
     archivoNombre: d.archivoNombre ?? null,
+    archivoTamanio: d.archivoTamanio ?? null,
     enviadoPor: userId,
     estadoEntrega: "pendiente",
   });

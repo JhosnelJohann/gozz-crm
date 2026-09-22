@@ -9,6 +9,7 @@ export const EnviarMensajeSchema = z.object({
   contenido: z.string().max(4096).nullable().optional(),
   archivoUrl: z.string().nullable().optional(),
   archivoNombre: z.string().nullable().optional(),
+  archivoTamanio: z.number().int().nonnegative().nullable().optional(),
 });
 
 export const CrearTagSchema = z.object({

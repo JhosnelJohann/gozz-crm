@@ -1,8 +1,8 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, CaretDown, Tag as TagIcon, Check, Plus, Eye } from "@/lib/bootstrap-icons";
+import { ArrowLeft, CaretDown, Tag as TagIcon, Check, Plus, Eye, AlertCircle } from "@/lib/bootstrap-icons";
 import { MessageStatus, type Status } from "@/components/chat/MessageStatus";
 import { FileMessage } from "@/components/chat/FileMessage";
 import { AudioMessage } from "@/components/chat/AudioMessage";
@@ -18,6 +18,8 @@ const COLORES_TAG = ["#5750E8", "#43A847", "#E53935", "#2196C9", "#FFB51C", "#33
 function estadoToStatus(e: WhatsAppMensaje["estado_entrega"]): Status {
   if (e === "leido") return "read";
   if (e === "entregado" || e === "enviado") return "delivered";
+  if (e === "pendiente") return "pending";
+  if (e === "fallido") return "failed";
   return "sent";
 }
 
@@ -30,14 +32,19 @@ function numeroConBandera(jid: string): string {
   return bandera ? `${bandera} ${texto}` : texto;
 }
 
-function Bubble({ m }: { m: WhatsAppMensaje }) {
+function Bubble({ m, onRetry }: { m: WhatsAppMensaje; onRetry?: (m: WhatsAppMensaje) => void }) {
   const isMe = m.direccion === "saliente";
+  const fallido = m.estado_entrega === "fallido";
   return (
     <div className={cn("flex", isMe ? "justify-end" : "justify-start")}>
       <div
         className={cn(
           "max-w-[78%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm",
-          isMe ? "bg-brand-primary text-white rounded-br-sm" : "bg-white dark:bg-white/[0.06] rounded-bl-sm border border-black/5 dark:border-white/10"
+          isMe
+            ? fallido
+              ? "bg-red-50 dark:bg-red-500/10 border border-red-300 dark:border-red-500/30 rounded-br-sm"
+              : "bg-brand-primary text-white rounded-br-sm"
+            : "bg-white dark:bg-white/[0.06] rounded-bl-sm border border-black/5 dark:border-white/10"
         )}
       >
         {m.tipo === "texto" && <div className="text-sm whitespace-pre-wrap break-words">{m.contenido}</div>}
@@ -51,11 +58,22 @@ function Bubble({ m }: { m: WhatsAppMensaje }) {
           <AudioMessage url={m.archivo_url} filename={m.archivo_nombre} mime={m.archivo_tipo} isMe={isMe} />
         )}
         {m.tipo === "archivo" && m.archivo_url && (
-          <FileMessage url={m.archivo_url} filename={m.archivo_nombre} mime={m.archivo_tipo} isMe={isMe} onVer={() => window.open(m.archivo_url!, "_blank")} />
+          <FileMessage url={m.archivo_url} filename={m.archivo_nombre} mime={m.archivo_tipo} size={m.archivo_tamanio} isMe={isMe} onVer={() => window.open(m.archivo_url!, "_blank")} />
         )}
-        <div className={cn("flex items-center gap-1 justify-end mt-1 text-[10px]", isMe ? "text-white/70" : "text-neutral-400")}>
-          {fmtHora(m.created_at)}
-          {isMe && <MessageStatus status={m.estado_entrega === "fallido" ? "sent" : estadoToStatus(m.estado_entrega)} />}
+        <div className={cn("flex items-center gap-1 justify-end mt-1 text-[10px]", isMe ? (fallido ? "text-red-600 dark:text-red-400" : "text-white/70") : "text-neutral-400")}>
+          {!fallido && fmtHora(m.created_at)}
+          {isMe && !fallido && <MessageStatus status={estadoToStatus(m.estado_entrega)} />}
+          {isMe && fallido && (
+            <button
+              type="button"
+              onClick={() => onRetry?.(m)}
+              title="No se pudo enviar — reintentar"
+              className="inline-flex items-center gap-1 font-ui font-bold uppercase tracking-wider hover:underline"
+            >
+              <AlertCircle className="h-3 w-3" />
+              No enviado · Reintentar
+            </button>
+          )}
           {/* "Visto por el equipo" — deliberadamente un ícono y color distintos del check de
               envío de arriba: uno es la confirmación de WhatsApp para lo que enviamos, este es
               que alguien del equipo ya vio, dentro del CRM, lo que el lead/cliente nos escribió. */}
@@ -212,8 +230,12 @@ interface Props {
   etapas: WhatsAppPipelineStage[];
   tags: WhatsAppTag[];
   conectado: boolean;
+  hasMore?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
   onBack?: () => void;
-  onSend: (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string }) => Promise<void>;
+  onSend: (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number }) => Promise<void>;
+  onRetry?: (m: WhatsAppMensaje) => void;
   onCambiarEtapa: (etapaId: string) => void;
   onToggleTag: (tag: WhatsAppTag) => void;
   onCrearTag: (nombre: string, color: string) => Promise<void>;
@@ -221,13 +243,60 @@ interface Props {
 }
 
 export function ConversationThread({
-  conversacion, mensajes, etapas, tags, conectado, onBack, onSend, onCambiarEtapa, onToggleTag, onCrearTag, onAbrirPerfil,
+  conversacion, mensajes, etapas, tags, conectado, hasMore = false, loadingOlder = false, onLoadOlder,
+  onBack, onSend, onRetry, onCambiarEtapa, onToggleTag, onCrearTag, onAbrirPerfil,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Ancla de scroll para el historial anterior (evita el "salto" al prepender mensajes viejos).
+  const anchorHeightRef = useRef(0);
+  const anchorTopRef = useRef(0);
+  const prevConversacionIdRef = useRef<string | null>(null);
+  const prevFirstIdRef = useRef<string | null>(null);
+  const prevLastIdRef = useRef<string | null>(null);
+  const prevLenRef = useRef(0);
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [mensajes?.length, conversacion.id]);
+  // Scroll cerca del tope → trae el historial anterior (antes el módulo cargaba fijo los últimos
+  // 50 mensajes y no había forma de ver nada más viejo, aunque el backend ya soportaba el cursor).
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollTop <= 120 && hasMore && !loadingOlder && onLoadOlder) {
+      anchorHeightRef.current = el.scrollHeight;
+      anchorTopRef.current = el.scrollTop;
+      onLoadOlder();
+    }
+  };
+
+  // Al cambiar de chat baja al fondo; con un mensaje nuevo baja solo si ya se estaba cerca del
+  // fondo (o es un mensaje propio); en scroll-up (prepend de historial) preserva la posición.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !mensajes) return;
+    const firstId = mensajes[0]?.id ?? null;
+    const lastId = mensajes[mensajes.length - 1]?.id ?? null;
+    const conversacionCambio = conversacion.id !== prevConversacionIdRef.current;
+    const esPrepend =
+      !conversacionCambio &&
+      !!prevFirstIdRef.current &&
+      firstId !== prevFirstIdRef.current &&
+      mensajes.length > prevLenRef.current &&
+      mensajes.some((m) => m.id === prevFirstIdRef.current);
+
+    if (conversacionCambio) {
+      el.scrollTop = el.scrollHeight;
+    } else if (esPrepend) {
+      el.scrollTop = el.scrollHeight - anchorHeightRef.current + anchorTopRef.current;
+    } else if (lastId && lastId !== prevLastIdRef.current) {
+      const cercaDelFondo = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+      const ultimoEsMio = mensajes[mensajes.length - 1]?.direccion === "saliente";
+      if (cercaDelFondo || ultimoEsMio) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+
+    prevFirstIdRef.current = firstId;
+    prevLastIdRef.current = lastId;
+    prevLenRef.current = mensajes.length;
+    prevConversacionIdRef.current = conversacion.id;
+  }, [mensajes, conversacion.id]);
 
   return (
     <div className="flex-1 flex flex-col min-w-0 h-full">
@@ -248,13 +317,18 @@ export function ConversationThread({
         <StagePicker etapas={etapas} valor={conversacion.etapa_id} onChange={onCambiarEtapa} />
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-2 chat-bg" data-lenis-prevent>
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-2 chat-bg" data-lenis-prevent>
+        {loadingOlder && (
+          <div className="flex justify-center py-1">
+            <div className="h-4 w-4 rounded-full border-2 border-neutral-300 border-t-brand-primary animate-spin" />
+          </div>
+        )}
         {mensajes === null ? (
           <div className="h-full flex items-center justify-center text-xs text-neutral-400">Cargando…</div>
         ) : mensajes.length === 0 ? (
           <div className="h-full flex items-center justify-center text-xs text-neutral-400">Todavía no hay mensajes en esta conversación</div>
         ) : (
-          mensajes.map((m) => <Bubble key={m.id} m={m} />)
+          mensajes.map((m) => <Bubble key={m.id} m={m} onRetry={onRetry} />)
         )}
       </div>
 

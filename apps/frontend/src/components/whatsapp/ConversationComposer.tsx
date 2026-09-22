@@ -5,7 +5,7 @@ import { Paperclip, Send, Smile } from "@/lib/bootstrap-icons";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 
 interface Props {
-  onSend: (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string }) => Promise<void>;
+  onSend: (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number }) => Promise<void>;
   disabled?: boolean;
 }
 
@@ -40,7 +40,7 @@ export function ConversationComposer({ onSend, disabled }: Props) {
       if (!r.ok) throw new Error(d.error || "No se pudo subir el archivo");
       const mime = (file.type || "").toLowerCase();
       const tipo = mime.startsWith("image/") ? "imagen" : mime.startsWith("video/") ? "video" : mime.startsWith("audio/") ? "audio" : "archivo";
-      await onSend({ tipo, archivoUrl: d.url, archivoNombre: file.name });
+      await onSend({ tipo, archivoUrl: d.url, archivoNombre: file.name, archivoTamanio: file.size });
     } catch (e: any) {
       toast.error(e?.message || "No se pudo enviar el archivo");
     } finally {
