@@ -49,7 +49,7 @@ export function ConversationComposer({ onSend, disabled }: Props) {
   };
 
   return (
-    <div className="shrink-0 border-t border-black/5 dark:border-white/10 p-3 flex items-end gap-2 bg-bg-canvas dark:bg-white/[0.01] relative">
+    <div className="shrink-0 border-t border-black/5 dark:border-white/10 p-3 flex items-end gap-2 backdrop-blur-md bg-white/70 dark:bg-white/[0.03] relative">
       <input
         ref={fileRef}
         type="file"
@@ -89,7 +89,7 @@ export function ConversationComposer({ onSend, disabled }: Props) {
       <button
         onClick={enviarTexto}
         disabled={disabled || enviando || !texto.trim()}
-        className="h-10 w-10 rounded-xl bg-brand-primary text-white flex items-center justify-center shrink-0 hover:brightness-110 disabled:opacity-40 transition"
+        className="h-10 w-10 rounded-xl gradient-orange text-white flex items-center justify-center shrink-0 shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-40 disabled:pointer-events-none disabled:translate-y-0 transition-all"
       >
         <Send className="h-4 w-4" />
       </button>

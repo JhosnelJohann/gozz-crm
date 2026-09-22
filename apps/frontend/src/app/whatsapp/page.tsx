@@ -432,7 +432,7 @@ function WhatsAppPageInner() {
     <AppShell>
       <div className="h-[calc(100vh-4rem)] flex overflow-hidden relative">
         <div className={cn("w-full lg:w-[380px] shrink-0 border-r border-black/5 dark:border-white/10 flex-col", activeConversacion ? "hidden lg:flex" : "flex")}>
-          <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-black/5 dark:border-white/10">
+          <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 glass-topbar">
             <ConnectionSwitcher
               conexiones={conexiones}
               activeId={activeConexionId}
@@ -472,11 +472,11 @@ function WhatsAppPageInner() {
               onAbrirPerfil={() => setPerfilOpen(true)}
             />
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
-              <div className="h-16 w-16 rounded-2xl bg-brand-green/10 text-brand-green flex items-center justify-center">
-                <WhatsappLogo className="h-7 w-7" weight="fill" />
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6 chat-bg">
+              <div className="h-16 w-16 rounded-2xl glass-panel text-brand-green flex items-center justify-center">
+                <WhatsappLogo className="h-7 w-7" weight="duotone" />
               </div>
-              <p className="text-sm font-bold">Selecciona una conversación</p>
+              <p className="text-sm font-bold font-display">Selecciona una conversación</p>
               <p className="text-xs text-neutral-500 max-w-[260px]">
                 {conexiones.length === 0 ? "Conecta un número de WhatsApp para empezar a recibir leads." : "Elige un chat de la lista para verlo aquí."}
               </p>

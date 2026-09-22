@@ -43,8 +43,8 @@ function Bubble({ m, onRetry }: { m: WhatsAppMensaje; onRetry?: (m: WhatsAppMens
           isMe
             ? fallido
               ? "bg-red-50 dark:bg-red-500/10 border border-red-300 dark:border-red-500/30 rounded-br-sm"
-              : "bg-brand-primary text-white rounded-br-sm"
-            : "bg-white dark:bg-white/[0.06] rounded-bl-sm border border-black/5 dark:border-white/10"
+              : "gradient-orange text-white rounded-br-sm shadow-md"
+            : "glass-light rounded-bl-sm"
         )}
       >
         {m.tipo === "texto" && <div className="text-sm whitespace-pre-wrap break-words">{m.contenido}</div>}
@@ -111,7 +111,7 @@ function StagePicker({ etapas, valor, onChange }: { etapas: WhatsAppPipelineStag
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-1 z-20 w-52 max-w-[calc(100vw-2rem)] rounded-xl bg-white dark:bg-neutral-900 shadow-2xl border border-black/10 dark:border-white/10 py-1 overflow-hidden">
+          <div className="absolute right-0 mt-1 z-20 w-52 max-w-[calc(100vw-2rem)] rounded-xl glass-panel py-1 overflow-hidden">
             {etapas.map((e) => (
               <button
                 key={e.id}
@@ -165,7 +165,7 @@ function TagPicker({ todas, activas, onToggle, onCrear }: {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => { setOpen(false); setCreando(false); }} />
-          <div className="absolute right-0 mt-1 z-20 w-56 max-w-[calc(100vw-2rem)] rounded-xl bg-white dark:bg-neutral-900 shadow-2xl border border-black/10 dark:border-white/10 py-1 overflow-hidden">
+          <div className="absolute right-0 mt-1 z-20 w-56 max-w-[calc(100vw-2rem)] rounded-xl glass-panel py-1 overflow-hidden">
             <div className="max-h-56 overflow-y-auto">
               {todas.length === 0 && !creando && <div className="px-3 py-2 text-[11px] text-neutral-400">Sin tags creados aún</div>}
               {todas.map((t) => {

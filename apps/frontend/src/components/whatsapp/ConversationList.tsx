@@ -89,8 +89,8 @@ export function ConversationList({ conversaciones, etapas, selectedId, etapaFilt
           </div>
         ) : conversaciones.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center px-6 py-16 gap-3">
-            <div className="h-14 w-14 rounded-2xl bg-brand-green/10 text-brand-green flex items-center justify-center">
-              <WhatsappLogo className="h-6 w-6" weight="fill" />
+            <div className="h-14 w-14 rounded-2xl glass-panel text-brand-green flex items-center justify-center">
+              <WhatsappLogo className="h-6 w-6" weight="duotone" />
             </div>
             <p className="text-sm font-bold">Sin conversaciones todavía</p>
             <p className="text-xs text-neutral-500 max-w-[220px]">Cuando un lead escriba a este número, aparecerá aquí.</p>
