@@ -192,15 +192,15 @@ export async function quitarTag(conversacionId: string, tagId: string) {
 // ---------------------------------------------------------------------------
 
 export async function listarConversaciones(conexionId: string, filtros: repo.FiltrosConversaciones) {
+  // Antes: 1 consulta por conversación para sus etiquetas (N+1 — 51 idas a la base con 50
+  // conversaciones). Ahora `repo.listConversaciones` ya trae las etiquetas agregadas en la misma
+  // consulta — una sola ida a la base de datos sin importar cuántas conversaciones haya.
   const conversaciones = await repo.listConversaciones(conexionId, filtros);
-  const conTags = await Promise.all(
-    conversaciones.map(async (c) => ({ ...c, tags: await repo.tagsDeConversacion(c.id) }))
-  );
   // La resolución automática de la foto solo ocurre cuando llega o sale un mensaje nuevo — una
   // conversación vieja sin actividad reciente se quedaría sin foto para siempre. Al listar (y al
   // abrir, ver abajo) se pide de una vez, sin bloquear la respuesta.
-  for (const c of conTags) if (!c.foto_perfil_url) notifyPedirFoto(c.id).catch(() => {});
-  return conTags;
+  for (const c of conversaciones) if (!c.foto_perfil_url) notifyPedirFoto(c.id).catch(() => {});
+  return conversaciones;
 }
 
 export async function obtenerConversacion(id: string) {

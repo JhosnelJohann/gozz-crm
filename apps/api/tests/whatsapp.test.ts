@@ -427,6 +427,154 @@ describe("WhatsApp — etapas y tags", () => {
   });
 });
 
+describe("WhatsApp — asignar, cambiar etapa y archivar", () => {
+  it("cambiarEtapa actualiza la etapa de la conversación", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52170${sufijo().replace(/\D/g, "").padEnd(7, "0").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+    } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+    const destino = (await service.listarEtapas()).find((e) => e.key === "oferta")!;
+
+    await service.cambiarEtapa(conv!.id, destino.id);
+
+    const actualizada = await repo.getConversacion(conv!.id);
+    expect(actualizada?.etapa_id).toBe(destino.id);
+  });
+
+  it("asignar cambia el asignado y admite desasignar con null", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52171${sufijo().replace(/\D/g, "").padEnd(7, "1").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+    } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+
+    // Un agente distinto del usuario base — `usuarioDePruebas()` es un singleton, así que
+    // reutilizarlo no probaría que el id asignado es realmente el que se pidió.
+    const agente = await query<any>(
+      `INSERT INTO gozz.users (email, password_hash, nombre, nivel_acceso)
+       VALUES ($1, 'no-es-un-hash', 'Agente de prueba', 'usuario') RETURNING id`,
+      [`suite-agente-${sufijo()}@pruebas.invalid`]
+    );
+    const agenteId = agente[0].id as string;
+
+    await service.asignar(conv!.id, agenteId);
+    let actualizada = await repo.getConversacion(conv!.id);
+    expect(actualizada?.asignado_a).toBe(agenteId);
+
+    await service.asignar(conv!.id, null);
+    actualizada = await repo.getConversacion(conv!.id);
+    expect(actualizada?.asignado_a).toBeNull();
+  });
+
+  it("archivar marca y desmarca archivado", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52172${sufijo().replace(/\D/g, "").padEnd(7, "2").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+    } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+
+    await service.archivar(conv!.id, true);
+    let actualizada = await repo.getConversacion(conv!.id);
+    expect(actualizada?.archivado).toBe(true);
+
+    await service.archivar(conv!.id, false);
+    actualizada = await repo.getConversacion(conv!.id);
+    expect(actualizada?.archivado).toBe(false);
+  });
+});
+
+describe("WhatsApp — filtros de listarConversaciones", () => {
+  it("filtra por etapaId", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const destino = (await service.listarEtapas()).find((e) => e.key === "decision")!;
+
+    const jidA = `52173${sufijo().replace(/\D/g, "").padEnd(7, "3").slice(0, 7)}@s.whatsapp.net`;
+    const jidB = `52174${sufijo().replace(/\D/g, "").padEnd(7, "4").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidA, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "A", timestamp: new Date() } as any);
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidB, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "B", timestamp: new Date() } as any);
+    const convA = await repo.getConversacionPorJid(conexion.id, jidA);
+    await service.cambiarEtapa(convA!.id, destino.id);
+
+    const filtradas = await service.listarConversaciones(conexion.id, { etapaId: destino.id });
+    expect(filtradas.map((c) => c.id)).toEqual([convA!.id]);
+  });
+
+  it("filtra por tagId y trae el tag agregado en el resultado (fix del N+1)", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jidA = `52175${sufijo().replace(/\D/g, "").padEnd(7, "5").slice(0, 7)}@s.whatsapp.net`;
+    const jidB = `52176${sufijo().replace(/\D/g, "").padEnd(7, "6").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidA, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "A", timestamp: new Date() } as any);
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidB, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "B", timestamp: new Date() } as any);
+    const convA = await repo.getConversacionPorJid(conexion.id, jidA);
+
+    const tag = await service.crearTag(`Prioridad ${sufijo()}`, "#E53935");
+    await service.agregarTag(convA!.id, tag.id);
+
+    const filtradas = await service.listarConversaciones(conexion.id, { tagId: tag.id });
+    expect(filtradas.map((c) => c.id)).toEqual([convA!.id]);
+    expect(filtradas[0].tags.map((t) => t.id)).toContain(tag.id);
+  });
+
+  it("filtra por asignadoId", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jidA = `52177${sufijo().replace(/\D/g, "").padEnd(7, "7").slice(0, 7)}@s.whatsapp.net`;
+    const jidB = `52178${sufijo().replace(/\D/g, "").padEnd(7, "8").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidA, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "A", timestamp: new Date() } as any);
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidB, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "B", timestamp: new Date() } as any);
+    const convA = await repo.getConversacionPorJid(conexion.id, jidA);
+
+    const agente = await query<any>(
+      `INSERT INTO gozz.users (email, password_hash, nombre, nivel_acceso)
+       VALUES ($1, 'no-es-un-hash', 'Agente filtro', 'usuario') RETURNING id`,
+      [`suite-agente-filtro-${sufijo()}@pruebas.invalid`]
+    );
+    await service.asignar(convA!.id, agente[0].id);
+
+    const filtradas = await service.listarConversaciones(conexion.id, { asignadoId: agente[0].id });
+    expect(filtradas.map((c) => c.id)).toEqual([convA!.id]);
+  });
+
+  it("filtra por búsqueda de texto (q) sobre el nombre de perfil", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52179${sufijo().replace(/\D/g, "").padEnd(7, "9").slice(0, 7)}@s.whatsapp.net`;
+    const nombrePerfil = `Cliente Buscable ${sufijo()}`;
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(), nombrePerfil,
+    } as any);
+
+    const filtradas = await service.listarConversaciones(conexion.id, { q: "Buscable" });
+    expect(filtradas.map((c) => c.wa_jid)).toContain(jid);
+  });
+
+  it("por defecto excluye archivadas, y el filtro archivado:true trae solo esas", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jidA = `52180${sufijo().replace(/\D/g, "").padEnd(7, "1").slice(0, 7)}@s.whatsapp.net`;
+    const jidB = `52181${sufijo().replace(/\D/g, "").padEnd(7, "2").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidA, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "A", timestamp: new Date() } as any);
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidB, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "B", timestamp: new Date() } as any);
+    const convA = await repo.getConversacionPorJid(conexion.id, jidA);
+    await service.archivar(convA!.id, true);
+
+    const activas = await service.listarConversaciones(conexion.id, {});
+    expect(activas.map((c) => c.id)).not.toContain(convA!.id);
+
+    const archivadas = await service.listarConversaciones(conexion.id, { archivado: true });
+    expect(archivadas.map((c) => c.id)).toEqual([convA!.id]);
+  });
+});
+
 describe("WhatsApp — FakeWhatsAppProvider (doble de pruebas)", () => {
   it("nunca toca WhatsApp real: sendMessage solo registra en memoria", async () => {
     const provider = new FakeWhatsAppProvider();

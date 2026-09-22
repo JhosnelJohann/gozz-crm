@@ -239,10 +239,13 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
         // que el composer sube (ver "whatsapp_mensaje" en lib/storage.ts + whatsapp.routes.ts).
         const dirRel = `whatsapp/entrantes/${shard(conexionId)}/${conexionId}`;
         const dirAbs = path.join(UPLOADS_ROOT, dirRel);
-        fs.mkdirSync(dirAbs, { recursive: true });
+        // Async a propósito: este worker sostiene TODAS las conexiones activas en un solo proceso
+        // — una escritura síncrona aquí congelaría el event loop (y con él, cualquier otra
+        // conexión de WhatsApp) mientras se guarda un adjunto grande.
+        await fs.promises.mkdir(dirAbs, { recursive: true });
         const ext = media.tipo === "image" ? ".jpg" : media.tipo === "video" ? ".mp4" : media.tipo === "audio" ? ".ogg" : path.extname(media.nombre || "") || ".bin";
         const filename = `${Date.now()}_${waMessageId.replace(/[^a-zA-Z0-9]/g, "")}${ext}`;
-        fs.writeFileSync(path.join(dirAbs, filename), buffer);
+        await fs.promises.writeFile(path.join(dirAbs, filename), buffer);
         archivoUrl = `/uploads/${dirRel}/${filename}`;
         archivoNombre = media.nombre || filename;
         archivoTipo = guessMime(filename);

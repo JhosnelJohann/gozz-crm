@@ -16,12 +16,21 @@ import type {
 // Conexiones
 // ---------------------------------------------------------------------------
 
+// Columnas seguras para exponer por API — NUNCA incluir `session_state_enc` aquí (es la sesión
+// cifrada de WhatsApp; antes se filtraba completa vía `SELECT *` en las respuestas de /conexiones).
+const CONEXION_COLUMNS = `
+  id, nombre, telefono, owner_user_id, proveedor, estado, qr_actual, qr_actualizado_at,
+  meta_cloud_phone_number_id, activo, errores_consecutivos, ultimo_error, ultima_actividad,
+  created_at, updated_at
+`;
+
 export async function listConexiones(userId: string, isAdmin: boolean): Promise<WhatsAppConexion[]> {
   if (isAdmin) {
-    return query<WhatsAppConexion>("SELECT * FROM gozz.whatsapp_conexiones WHERE activo = true ORDER BY created_at");
+    return query<WhatsAppConexion>(`SELECT ${CONEXION_COLUMNS} FROM gozz.whatsapp_conexiones WHERE activo = true ORDER BY created_at`);
   }
   return query<WhatsAppConexion>(
-    `SELECT DISTINCT c.* FROM gozz.whatsapp_conexiones c
+    `SELECT DISTINCT ${CONEXION_COLUMNS.trim().split(",").map((c) => `c.${c.trim()}`).join(", ")}
+     FROM gozz.whatsapp_conexiones c
      LEFT JOIN gozz.whatsapp_conexion_acl a ON a.conexion_id = c.id
      WHERE c.activo = true AND (c.owner_user_id = $1 OR a.user_id = $1)
      ORDER BY c.created_at`,
@@ -30,7 +39,7 @@ export async function listConexiones(userId: string, isAdmin: boolean): Promise<
 }
 
 export async function getConexion(id: string): Promise<WhatsAppConexion | null> {
-  const rows = await query<WhatsAppConexion>("SELECT * FROM gozz.whatsapp_conexiones WHERE id = $1", [id]);
+  const rows = await query<WhatsAppConexion>(`SELECT ${CONEXION_COLUMNS} FROM gozz.whatsapp_conexiones WHERE id = $1`, [id]);
   return rows[0] ?? null;
 }
 
@@ -182,24 +191,41 @@ export async function quitarTagDeConversacion(conversacionId: string, tagId: str
 export interface FiltrosConversaciones {
   etapaId?: string;
   tagId?: string;
+  asignadoId?: string;
   archivado?: boolean;
   q?: string;
 }
 
-export async function listConversaciones(conexionId: string, filtros: FiltrosConversaciones = {}): Promise<WhatsAppConversacion[]> {
+export type WhatsAppConversacionConTags = WhatsAppConversacion & { tags: WhatsAppTag[] };
+
+/**
+ * Trae las etiquetas de cada conversación con una sub-consulta correlacionada en la MISMA query
+ * (una sola ida a la base de datos), en vez de una consulta aparte por conversación como antes
+ * (con 50 conversaciones eran 51 idas y vueltas — la causa real del "delay" al listar). El filtro
+ * por etiqueta usa `EXISTS` en vez de un JOIN para no interferir con esta agregación.
+ */
+export async function listConversaciones(conexionId: string, filtros: FiltrosConversaciones = {}): Promise<WhatsAppConversacionConTags[]> {
   const cond: string[] = ["c.conexion_id = $1"];
   const params: any[] = [conexionId];
   if (filtros.etapaId) { params.push(filtros.etapaId); cond.push(`c.etapa_id = $${params.length}`); }
+  if (filtros.asignadoId) { params.push(filtros.asignadoId); cond.push(`c.asignado_a = $${params.length}`); }
   if (filtros.archivado !== undefined) { params.push(filtros.archivado); cond.push(`c.archivado = $${params.length}`); }
   else { cond.push("c.archivado = false"); }
   if (filtros.q) { params.push(`%${filtros.q}%`); cond.push(`(c.nombre_whatsapp ILIKE $${params.length} OR c.wa_jid ILIKE $${params.length})`); }
-  let join = "";
   if (filtros.tagId) {
     params.push(filtros.tagId);
-    join = `JOIN gozz.whatsapp_conversacion_tags ct ON ct.conversacion_id = c.id AND ct.tag_id = $${params.length}`;
+    cond.push(`EXISTS (SELECT 1 FROM gozz.whatsapp_conversacion_tags ct2 WHERE ct2.conversacion_id = c.id AND ct2.tag_id = $${params.length})`);
   }
-  return query<WhatsAppConversacion>(
-    `SELECT DISTINCT c.* FROM gozz.whatsapp_conversaciones c ${join}
+  return query<WhatsAppConversacionConTags>(
+    `SELECT c.*,
+       COALESCE(
+         (SELECT jsonb_agg(jsonb_build_object('id', t.id, 'nombre', t.nombre, 'color', t.color) ORDER BY t.nombre)
+          FROM gozz.whatsapp_conversacion_tags ct
+          JOIN gozz.whatsapp_tags t ON t.id = ct.tag_id
+          WHERE ct.conversacion_id = c.id),
+         '[]'::jsonb
+       ) AS tags
+     FROM gozz.whatsapp_conversaciones c
      WHERE ${cond.join(" AND ")}
      ORDER BY c.ultimo_mensaje_at DESC NULLS LAST, c.created_at DESC`,
     params

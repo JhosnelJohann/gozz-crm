@@ -71,9 +71,11 @@ export function registerWhatsAppRoutes(app: Express, upload: Multer) {
     const id = String(req.params.id);
     if (!(await requireAccesoConexion(req, res, id))) return;
     const q = req.query as Record<string, string>;
+    const asignadoParam = q.asignado === "me" ? (req as any).user.sub : q.asignado || undefined;
     const conversaciones = await service.listarConversaciones(id, {
       etapaId: q.etapa || undefined,
       tagId: q.tag || undefined,
+      asignadoId: asignadoParam,
       archivado: q.archivado === "1" ? true : q.archivado === "0" ? false : undefined,
       q: q.q || undefined,
     });
