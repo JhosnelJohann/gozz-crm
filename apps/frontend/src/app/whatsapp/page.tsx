@@ -7,12 +7,13 @@ import { cn } from "@/lib/utils";
 import { getSocket } from "@/lib/socket";
 import { formatearNumeroWhatsApp } from "@/lib/whatsapp-numero";
 import { setWhatsappActive } from "@/lib/whatsappActive";
-import { WhatsappLogo } from "@/lib/bootstrap-icons";
+import { WhatsappLogo, List, LayoutGrid } from "@/lib/bootstrap-icons";
 import { ConnectionSwitcher } from "@/components/whatsapp/ConnectionSwitcher";
 import { ConnectWhatsAppModal } from "@/components/whatsapp/ConnectWhatsAppModal";
 import { ConversationList, type ConversacionItem } from "@/components/whatsapp/ConversationList";
 import type { UsuarioAsignable } from "@/components/whatsapp/AsignadoPicker";
 import { ConversationThread } from "@/components/whatsapp/ConversationThread";
+import { WhatsappKanban } from "@/components/whatsapp/WhatsappKanban";
 import { PerfilConversacionModal } from "@/components/whatsapp/PerfilConversacionModal";
 import { VincularContactoModal } from "@/components/whatsapp/VincularContactoModal";
 import { ConvertToOportunidadModal } from "@/components/whatsapp/ConvertToOportunidadModal";
@@ -63,6 +64,7 @@ function WhatsAppPageInner() {
   const [busqueda, setBusqueda] = useState("");
   const [busquedaDebounced, setBusquedaDebounced] = useState("");
   const [usuarios, setUsuarios] = useState<UsuarioAsignable[]>([]);
+  const [vista, setVista] = useState<"lista" | "tablero">("lista");
   const [conversaciones, setConversaciones] = useState<ConversacionItem[] | null>(null);
   const [loadingConv, setLoadingConv] = useState(false);
   const [activeConversacion, setActiveConversacion] = useState<WhatsAppConversacionDetalle | null>(null);
@@ -338,6 +340,15 @@ function WhatsAppPageInner() {
     setConversaciones((cur) => cur ? cur.map((x) => x.id === c.id ? { ...x, no_leidos_count: 0 } : x) : cur);
   };
 
+  // Abrir una conversación desde el tablero: puede no estar en la lista filtrada actual (el
+  // tablero no aplica el filtro de etapa), así que se carga directo por id, igual que el enlace
+  // profundo `?conversacion=`.
+  const abrirDesdeKanban = (conversacionId: string) => {
+    setVista("lista");
+    loadConversacionDetalle(conversacionId);
+    loadMensajes(conversacionId);
+  };
+
   const enviarMensaje = async (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number }) => {
     if (!activeConversacion) return;
     // Envío optimista: la burbuja aparece de inmediato con estado "pendiente" (como WhatsApp Web)
@@ -471,68 +482,100 @@ function WhatsAppPageInner() {
 
   return (
     <AppShell>
-      <div className="h-[calc(100vh-4rem)] flex overflow-hidden relative">
-        <div className={cn("w-full lg:w-[380px] shrink-0 border-r border-black/5 dark:border-white/10 flex-col", activeConversacion ? "hidden lg:flex" : "flex")}>
-          <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 glass-topbar">
-            <ConnectionSwitcher
-              conexiones={conexiones}
-              activeId={activeConexionId}
-              onSelect={setActiveConexionId}
-              onConnectNew={() => setConnectOpen(true)}
-              onDesconectar={(c) => setDesconectarTarget(c)}
-            />
-          </div>
-          <ConversationList
-            conversaciones={conversaciones}
-            etapas={etapas}
-            tags={tags}
-            selectedId={activeConversacion?.id ?? null}
-            etapaFiltro={etapaFiltro}
-            onEtapaFiltroChange={setEtapaFiltro}
-            tagFiltro={tagFiltro}
-            onTagFiltroChange={setTagFiltro}
-            soloAsignadasAMi={soloAsignadasAMi}
-            onToggleSoloAsignadasAMi={() => setSoloAsignadasAMi((v) => !v)}
-            busqueda={busqueda}
-            onBusquedaChange={setBusqueda}
-            onSelect={seleccionarConversacion}
-            loading={loadingConv}
-          />
-        </div>
-
-        <div className={cn("flex-1 min-w-0 flex-col", activeConversacion ? "flex" : "hidden lg:flex")}>
-          {activeConversacion ? (
-            <ConversationThread
-              conversacion={activeConversacion}
-              mensajes={mensajes}
-              etapas={etapas}
-              tags={tags}
-              usuarios={usuarios}
-              conectado={activeConexion?.estado === "conectado"}
-              hasMore={hasMoreMensajes}
-              loadingOlder={loadingOlderMensajes}
-              onLoadOlder={loadMensajesAnteriores}
-              onBack={() => setActiveConversacion(null)}
-              onSend={enviarMensaje}
-              onRetry={reintentarMensaje}
-              onCambiarEtapa={cambiarEtapa}
-              onAsignar={asignar}
-              onToggleTag={toggleTag}
-              onCrearTag={crearTag}
-              onAbrirPerfil={() => setPerfilOpen(true)}
-            />
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6 chat-bg">
-              <div className="h-16 w-16 rounded-2xl glass-panel text-brand-green flex items-center justify-center">
-                <WhatsappLogo className="h-7 w-7" weight="duotone" />
-              </div>
-              <p className="text-sm font-bold font-display">Selecciona una conversación</p>
-              <p className="text-xs text-neutral-500 max-w-[260px]">
-                {conexiones.length === 0 ? "Conecta un número de WhatsApp para empezar a recibir leads." : "Elige un chat de la lista para verlo aquí."}
-              </p>
+      <div className="h-[calc(100vh-4rem)] flex flex-col overflow-hidden relative">
+        {vista === "tablero" ? (
+          <>
+            <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 glass-topbar">
+              <ConnectionSwitcher
+                conexiones={conexiones}
+                activeId={activeConexionId}
+                onSelect={setActiveConexionId}
+                onConnectNew={() => setConnectOpen(true)}
+                onDesconectar={(c) => setDesconectarTarget(c)}
+              />
+              <div className="flex-1" />
+              <button
+                onClick={() => setVista("lista")}
+                title="Volver a la lista"
+                className="h-8 px-3 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-1.5 text-[11px] font-ui font-bold uppercase tracking-wider text-brand-primary transition shrink-0"
+              >
+                <List className="h-3.5 w-3.5" /> Lista
+              </button>
             </div>
-          )}
-        </div>
+            <WhatsappKanban conexionId={activeConexionId} etapas={etapas} onAbrirConversacion={abrirDesdeKanban} />
+          </>
+        ) : (
+          <div className="flex-1 flex overflow-hidden">
+            <div className={cn("w-full lg:w-[380px] shrink-0 border-r border-black/5 dark:border-white/10 flex-col", activeConversacion ? "hidden lg:flex" : "flex")}>
+              <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 glass-topbar">
+                <ConnectionSwitcher
+                  conexiones={conexiones}
+                  activeId={activeConexionId}
+                  onSelect={setActiveConexionId}
+                  onConnectNew={() => setConnectOpen(true)}
+                  onDesconectar={(c) => setDesconectarTarget(c)}
+                />
+                <button
+                  onClick={() => setVista("tablero")}
+                  title="Vista de tablero"
+                  className="hidden lg:flex h-8 w-8 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 items-center justify-center text-neutral-500 shrink-0 transition"
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </button>
+              </div>
+              <ConversationList
+                conversaciones={conversaciones}
+                etapas={etapas}
+                tags={tags}
+                selectedId={activeConversacion?.id ?? null}
+                etapaFiltro={etapaFiltro}
+                onEtapaFiltroChange={setEtapaFiltro}
+                tagFiltro={tagFiltro}
+                onTagFiltroChange={setTagFiltro}
+                soloAsignadasAMi={soloAsignadasAMi}
+                onToggleSoloAsignadasAMi={() => setSoloAsignadasAMi((v) => !v)}
+                busqueda={busqueda}
+                onBusquedaChange={setBusqueda}
+                onSelect={seleccionarConversacion}
+                loading={loadingConv}
+              />
+            </div>
+
+            <div className={cn("flex-1 min-w-0 flex-col", activeConversacion ? "flex" : "hidden lg:flex")}>
+              {activeConversacion ? (
+                <ConversationThread
+                  conversacion={activeConversacion}
+                  mensajes={mensajes}
+                  etapas={etapas}
+                  tags={tags}
+                  usuarios={usuarios}
+                  conectado={activeConexion?.estado === "conectado"}
+                  hasMore={hasMoreMensajes}
+                  loadingOlder={loadingOlderMensajes}
+                  onLoadOlder={loadMensajesAnteriores}
+                  onBack={() => setActiveConversacion(null)}
+                  onSend={enviarMensaje}
+                  onRetry={reintentarMensaje}
+                  onCambiarEtapa={cambiarEtapa}
+                  onAsignar={asignar}
+                  onToggleTag={toggleTag}
+                  onCrearTag={crearTag}
+                  onAbrirPerfil={() => setPerfilOpen(true)}
+                />
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6 chat-bg">
+                  <div className="h-16 w-16 rounded-2xl glass-panel text-brand-green flex items-center justify-center">
+                    <WhatsappLogo className="h-7 w-7" weight="duotone" />
+                  </div>
+                  <p className="text-sm font-bold font-display">Selecciona una conversación</p>
+                  <p className="text-xs text-neutral-500 max-w-[260px]">
+                    {conexiones.length === 0 ? "Conecta un número de WhatsApp para empezar a recibir leads." : "Elige un chat de la lista para verlo aquí."}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {connectOpen && (
