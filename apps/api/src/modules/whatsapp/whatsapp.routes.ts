@@ -45,6 +45,11 @@ export function registerWhatsAppRoutes(app: Express, upload: Multer) {
     res.json(await service.listarConexiones(u.sub, u.nivel));
   });
 
+  app.get("/api/whatsapp/no-leidos", requireAuth, async (req, res) => {
+    const u = (req as any).user;
+    res.json({ total: await service.contarNoLeidos(u.sub, u.nivel) });
+  });
+
   app.post("/api/whatsapp/conexiones", requireAuth, async (req, res) => {
     const parsed = CrearConexionSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }

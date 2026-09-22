@@ -575,6 +575,44 @@ describe("WhatsApp — filtros de listarConversaciones", () => {
   });
 });
 
+describe("WhatsApp — contador de no leídos (insignia del menú lateral)", () => {
+  it("suma no_leidos_count de las conversaciones con acceso, excluye archivadas, y baja al marcar leída", async () => {
+    const agente = await query<any>(
+      `INSERT INTO gozz.users (email, password_hash, nombre, nivel_acceso)
+       VALUES ($1, 'no-es-un-hash', 'Agente no-leídos', 'usuario') RETURNING id`,
+      [`suite-no-leidos-${sufijo()}@pruebas.invalid`]
+    );
+    const agenteId = agente[0].id as string;
+    // Conexión propia de este agente (nadie más la posee ni tiene ACL sobre ella) — así el total
+    // que se mida abajo depende solo de lo que este test crea, sin importar qué haya dejado el
+    // resto de la suite en la base compartida.
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, agenteId);
+
+    const jidA = `52190${sufijo().replace(/\D/g, "").padEnd(7, "1").slice(0, 7)}@s.whatsapp.net`;
+    const jidB = `52191${sufijo().replace(/\D/g, "").padEnd(7, "2").slice(0, 7)}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidA, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "A1", timestamp: new Date() } as any);
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidA, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "A2", timestamp: new Date() } as any);
+    await service.registrarMensajeEntrante(conexion.id, { jid: jidB, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "B1", timestamp: new Date() } as any);
+
+    expect(await service.contarNoLeidos(agenteId, "usuario")).toBe(3);
+
+    const convA = await repo.getConversacionPorJid(conexion.id, jidA);
+    await service.marcarLeida(convA!.id, agenteId);
+    expect(await service.contarNoLeidos(agenteId, "usuario")).toBe(1); // solo queda el de jidB
+
+    const convB = await repo.getConversacionPorJid(conexion.id, jidB);
+    await service.archivar(convB!.id, true);
+    expect(await service.contarNoLeidos(agenteId, "usuario")).toBe(0);
+
+    const ajeno = await query<any>(
+      `INSERT INTO gozz.users (email, password_hash, nombre, nivel_acceso)
+       VALUES ($1, 'no-es-un-hash', 'Sin acceso a esta conexión', 'usuario') RETURNING id`,
+      [`suite-sin-acceso-${sufijo()}@pruebas.invalid`]
+    );
+    expect(await service.contarNoLeidos(ajeno[0].id, "usuario")).toBe(0);
+  });
+});
+
 describe("WhatsApp — FakeWhatsAppProvider (doble de pruebas)", () => {
   it("nunca toca WhatsApp real: sendMessage solo registra en memoria", async () => {
     const provider = new FakeWhatsAppProvider();

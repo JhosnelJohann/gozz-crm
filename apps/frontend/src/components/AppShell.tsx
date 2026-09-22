@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { startHeartbeat } from "@/lib/presence";
 import { IncomingCallModal } from "@/components/chat/IncomingCallModal";
 import { MessageToast } from "@/components/MessageToast";
+import { WhatsappNotifier } from "@/components/whatsapp/WhatsappNotifier";
 import { SuperNotifyBanner } from "@/components/tareas/SuperNotifyBanner";
 import { TaskNotifier } from "@/components/tareas/TaskNotifier";
 import { DescuentoSolicitudBanner } from "@/components/descuentos/DescuentoSolicitudBanner";
@@ -58,6 +59,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <IncomingCallModal />
       <MessageToast />
+      <WhatsappNotifier />
       <SuperNotifyBanner />
       <TaskNotifier />
       <DescuentoSolicitudBanner />

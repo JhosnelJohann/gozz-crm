@@ -37,6 +37,10 @@ export async function listarConexiones(userId: string, nivel: string) {
   return repo.listConexiones(userId, nivel === "super_admin" || nivel === "admin");
 }
 
+export async function contarNoLeidos(userId: string, nivel: string) {
+  return repo.contarNoLeidos(userId, nivel === "super_admin" || nivel === "admin");
+}
+
 export async function crearConexion(nombre: string, ownerUserId: string) {
   return repo.crearConexion(nombre, ownerUserId);
 }

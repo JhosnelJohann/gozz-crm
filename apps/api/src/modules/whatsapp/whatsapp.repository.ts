@@ -38,6 +38,33 @@ export async function listConexiones(userId: string, isAdmin: boolean): Promise<
   );
 }
 
+/** Total de no leídos de TODAS las conversaciones a las que el usuario tiene acceso — para la
+ * insignia del menú lateral. `EXISTS` en vez de `LEFT JOIN` a propósito: un `JOIN` contra
+ * `whatsapp_conexion_acl` duplicaría filas (y por tanto el conteo) si una conexión tuviera más de
+ * una entrada de ACL. */
+export async function contarNoLeidos(userId: string, isAdmin: boolean): Promise<number> {
+  if (isAdmin) {
+    const rows = await query<{ total: string }>(
+      `SELECT COALESCE(SUM(c.no_leidos_count), 0) AS total
+       FROM gozz.whatsapp_conversaciones c
+       JOIN gozz.whatsapp_conexiones cx ON cx.id = c.conexion_id
+       WHERE cx.activo = true AND c.archivado = false`
+    );
+    return Number(rows[0]?.total ?? 0);
+  }
+  const rows = await query<{ total: string }>(
+    `SELECT COALESCE(SUM(c.no_leidos_count), 0) AS total
+     FROM gozz.whatsapp_conversaciones c
+     JOIN gozz.whatsapp_conexiones cx ON cx.id = c.conexion_id
+     WHERE cx.activo = true AND c.archivado = false
+       AND (cx.owner_user_id = $1 OR EXISTS (
+         SELECT 1 FROM gozz.whatsapp_conexion_acl a WHERE a.conexion_id = cx.id AND a.user_id = $1
+       ))`,
+    [userId]
+  );
+  return Number(rows[0]?.total ?? 0);
+}
+
 export async function getConexion(id: string): Promise<WhatsAppConexion | null> {
   const rows = await query<WhatsAppConexion>(`SELECT ${CONEXION_COLUMNS} FROM gozz.whatsapp_conexiones WHERE id = $1`, [id]);
   return rows[0] ?? null;

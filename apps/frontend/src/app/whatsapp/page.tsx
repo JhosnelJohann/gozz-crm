@@ -6,6 +6,7 @@ import { AppShell } from "@/components/AppShell";
 import { cn } from "@/lib/utils";
 import { getSocket } from "@/lib/socket";
 import { formatearNumeroWhatsApp } from "@/lib/whatsapp-numero";
+import { setWhatsappActive } from "@/lib/whatsappActive";
 import { WhatsappLogo } from "@/lib/bootstrap-icons";
 import { ConnectionSwitcher } from "@/components/whatsapp/ConnectionSwitcher";
 import { ConnectWhatsAppModal } from "@/components/whatsapp/ConnectWhatsAppModal";
@@ -76,6 +77,13 @@ function WhatsAppPageInner() {
   const searchParams = useSearchParams();
 
   const activeConexion = useMemo(() => conexiones.find((c) => c.id === activeConexionId) || null, [conexiones, activeConexionId]);
+
+  // Le dice a `WhatsappNotifier` qué conversación se está viendo, para no mostrar un toast de algo
+  // que ya está en pantalla (mismo patrón que `chatActive.ts`/`setActiveChat` del chat interno).
+  useEffect(() => {
+    setWhatsappActive(activeConversacion?.id ?? null);
+    return () => setWhatsappActive(null);
+  }, [activeConversacion?.id]);
 
   const loadConexiones = async () => {
     try {

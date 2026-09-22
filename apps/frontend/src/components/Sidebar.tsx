@@ -10,6 +10,7 @@ import {
 } from "@/lib/bootstrap-icons";
 import { cn } from "@/lib/utils";
 import { useChatUnread } from "@/lib/useChatUnread";
+import { useWhatsappUnread } from "@/lib/useWhatsappUnread";
 import { useTareasPendientes } from "@/lib/useTareasPendientes";
 import { useCurrentUser, initialsOf } from "@/lib/auth-user";
 import { MoonMark } from "@/components/magic/MoonMark";
@@ -49,6 +50,7 @@ const NAV = [
 export function Sidebar({ mobileOpen = false, onClose }: { mobileOpen?: boolean; onClose?: () => void }) {
   const pathname = usePathname();
   const chatUnread = useChatUnread();
+  const whatsappUnread = useWhatsappUnread();
   const tareasPendientes = useTareasPendientes();
   const { user } = useCurrentUser();
   const [collapsed, setCollapsed] = useState(false);
@@ -86,6 +88,7 @@ export function Sidebar({ mobileOpen = false, onClose }: { mobileOpen?: boolean;
           pathname={pathname}
           collapsed={collapsed}
           chatUnread={chatUnread}
+          whatsappUnread={whatsappUnread}
           tareasPendientes={tareasPendientes}
           user={user}
           footer={
@@ -117,6 +120,7 @@ export function Sidebar({ mobileOpen = false, onClose }: { mobileOpen?: boolean;
               pathname={pathname}
               collapsed={false}
               chatUnread={chatUnread}
+              whatsappUnread={whatsappUnread}
               tareasPendientes={tareasPendientes}
               user={user}
               onNavigate={onClose}
@@ -141,6 +145,7 @@ interface ContentProps {
   pathname: string;
   collapsed: boolean;
   chatUnread: number;
+  whatsappUnread: number;
   tareasPendientes: number;
   user: ReturnType<typeof useCurrentUser>["user"];
   footer?: React.ReactNode;
@@ -148,7 +153,7 @@ interface ContentProps {
   onNavigate?: () => void;
 }
 
-function SidebarContent({ pathname, collapsed, chatUnread, tareasPendientes, user, footer, headerExtra, onNavigate }: ContentProps) {
+function SidebarContent({ pathname, collapsed, chatUnread, whatsappUnread, tareasPendientes, user, footer, headerExtra, onNavigate }: ContentProps) {
   return (
     <>
       <div className="absolute inset-0 opacity-20 pointer-events-none">
@@ -176,7 +181,7 @@ function SidebarContent({ pathname, collapsed, chatUnread, tareasPendientes, use
         {NAV.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
-          const badge = item.href === "/chat" ? chatUnread : item.href === "/tareas" ? tareasPendientes : 0;
+          const badge = item.href === "/chat" ? chatUnread : item.href === "/whatsapp" ? whatsappUnread : item.href === "/tareas" ? tareasPendientes : 0;
 
           const link = (
             <Link
