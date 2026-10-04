@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Search, Tag as TagIcon, CaretDown, Check, UserCircle } from "@/lib/bootstrap-icons";
@@ -41,15 +42,34 @@ interface Props {
   loading: boolean;
 }
 
-/** Dropdown compacto para filtrar por una sola etiqueta — mismo patrón visual que el `TagPicker`
- * del hilo (`ConversationThread.tsx`), pero de selección única (filtro, no asignación). */
+/**
+ * Dropdown compacto para filtrar por una sola etiqueta — mismo patrón visual que el `TagPicker`
+ * del hilo (`ConversationThread.tsx`), pero de selección única (filtro, no asignación).
+ *
+ * El panel se renderiza en un portal (mismo patrón de `Tooltip.tsx`/`BuzonesRail.tsx`), no como
+ * `absolute` dentro de este propio botón: este botón vive en la fila de chips con
+ * `overflow-x-auto`, y un `overflow-x` distinto de `visible` recorta también el eje Y si no se
+ * declara `overflow-y` aparte — un `absolute` normal quedaba invisible, recortado por esa fila,
+ * aunque el clic sí abría el panel (confirmado en pruebas reales: el elemento existía pero no se
+ * veía en pantalla).
+ */
 function TagFiltroDropdown({ tags, valor, onChange }: { tags: WhatsAppTag[]; valor: string | null; onChange: (id: string | null) => void }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const actual = tags.find((t) => t.id === valor);
+
+  const abrir = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, left: r.left });
+    setOpen((v) => !v);
+  };
+
   return (
-    <div className="relative shrink-0">
+    <div className="shrink-0">
       <button
-        onClick={() => setOpen((v) => !v)}
+        ref={btnRef}
+        onClick={abrir}
         title="Filtrar por etiqueta"
         className={cn(
           "h-[26px] px-2.5 rounded-full text-[10.5px] font-ui font-bold uppercase tracking-wider flex items-center gap-1 transition",
@@ -61,10 +81,13 @@ function TagFiltroDropdown({ tags, valor, onChange }: { tags: WhatsAppTag[]; val
         {actual ? actual.nombre : "Etiqueta"}
         <CaretDown className="h-2.5 w-2.5" />
       </button>
-      {open && (
+      {open && pos && typeof document !== "undefined" && createPortal(
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 mt-1 z-20 w-48 max-h-64 overflow-y-auto rounded-xl glass-panel py-1">
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            style={{ position: "fixed", top: pos.top, left: pos.left }}
+            className="z-50 w-48 max-h-64 overflow-y-auto rounded-xl glass-panel py-1"
+          >
             <button
               onClick={() => { onChange(null); setOpen(false); }}
               className="w-full text-left px-3 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-2 transition"
@@ -85,7 +108,8 @@ function TagFiltroDropdown({ tags, valor, onChange }: { tags: WhatsAppTag[]; val
               </button>
             ))}
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );
