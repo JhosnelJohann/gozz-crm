@@ -1,8 +1,10 @@
 "use client";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { Paperclip, Send, Smile } from "@/lib/bootstrap-icons";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
+import { ChatAudioRecorder } from "@/components/chat/AudioRecorder";
 
 interface Props {
   onSend: (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number }) => Promise<void>;
@@ -48,6 +50,25 @@ export function ConversationComposer({ onSend, disabled }: Props) {
     }
   };
 
+  // Nota de voz: mismo pipeline que cualquier adjunto (sube a /api/whatsapp/upload, luego
+  // enviarMensaje con tipo "audio") — la grabación en sí la resuelve por completo
+  // `ChatAudioRecorder`, ya probado en el chat interno; aquí no se reescribe nada de eso.
+  const subirAudio = async (file: File) => {
+    setEnviando(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch("/api/whatsapp/upload", { method: "POST", body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "No se pudo subir el audio");
+      await onSend({ tipo: "audio", archivoUrl: d.url, archivoNombre: file.name, archivoTamanio: file.size });
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo enviar el audio");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
   return (
     <div className="shrink-0 border-t border-black/5 dark:border-white/10 p-3 flex items-end gap-2 backdrop-blur-md bg-white/70 dark:bg-white/[0.03] relative">
       <input
@@ -86,10 +107,18 @@ export function ConversationComposer({ onSend, disabled }: Props) {
         rows={1}
         className="flex-1 min-h-[40px] max-h-32 resize-none py-2.5 px-4 rounded-xl bg-bg-surface-2 dark:bg-white/[0.05] border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary/40 disabled:opacity-50"
       />
+      {/* Mic/enviar dinámico: la nota de voz reemplaza al botón de enviar mientras el campo de
+          texto está vacío, igual que en WhatsApp real y que ya hace `ChatComposer.tsx`. */}
+      <div className={texto.trim() ? "hidden" : ""}>
+        <ChatAudioRecorder disabled={disabled || enviando} onSend={async (file) => { await subirAudio(file); }} />
+      </div>
       <button
         onClick={enviarTexto}
         disabled={disabled || enviando || !texto.trim()}
-        className="h-10 w-10 rounded-xl gradient-orange text-white flex items-center justify-center shrink-0 shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-40 disabled:pointer-events-none disabled:translate-y-0 transition-all"
+        className={cn(
+          "h-10 w-10 rounded-xl gradient-orange text-white flex items-center justify-center shrink-0 shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-40 disabled:pointer-events-none disabled:translate-y-0 transition-all",
+          !texto.trim() && "hidden"
+        )}
       >
         <Send className="h-4 w-4" />
       </button>
