@@ -8,7 +8,11 @@ import type { AgenteIA, AutomatizacionRegla, Recordatorio, RecordatorioCanal } f
 // Agentes de IA (gozz.users con es_agente_ia = true)
 // ---------------------------------------------------------------------------
 
-const AGENTE_COLUMNS = "id, nombre, email, n8n_webhook_url, activo, created_at";
+// `ultima_entrega`: el último aviso a su webhook, para que la UI muestre si n8n responde.
+const AGENTE_COLUMNS = `id, nombre, email, n8n_webhook_url, activo, created_at, n8n_eventos,
+  (SELECT row_to_json(e) FROM (
+     SELECT estado, evento, ultimo_status, ultimo_error, created_at FROM gozz.webhook_entregas
+      WHERE agente_id = users.id ORDER BY created_at DESC LIMIT 1) e) AS ultima_entrega`;
 
 export async function listAgentesIA(): Promise<AgenteIA[]> {
   return query<AgenteIA>(`SELECT ${AGENTE_COLUMNS} FROM gozz.users WHERE es_agente_ia = true ORDER BY nombre`);
@@ -22,20 +26,20 @@ export async function getAgenteIA(id: string): Promise<AgenteIA | null> {
 /** Un agente de IA nunca inicia sesión — se le pone un hash de un secreto aleatorio que nadie
  * conoce, en vez de relajar `password_hash` a NULL (evita tocar una columna de seguridad que otro
  * código pueda asumir siempre presente). */
-export async function crearAgenteIA(nombre: string, email: string, n8nWebhookUrl: string | null): Promise<AgenteIA> {
+export async function crearAgenteIA(nombre: string, email: string, n8nWebhookUrl: string | null, n8nEventos: string[] = []): Promise<AgenteIA> {
   const passwordHash = await bcrypt.hash(crypto.randomUUID(), 10);
   const rows = await query<AgenteIA>(
-    `INSERT INTO gozz.users (email, password_hash, nombre, nivel_acceso, es_agente_ia, n8n_webhook_url)
-     VALUES ($1, $2, $3, 'usuario', true, $4)
+    `INSERT INTO gozz.users (email, password_hash, nombre, nivel_acceso, es_agente_ia, n8n_webhook_url, n8n_eventos)
+     VALUES ($1, $2, $3, 'usuario', true, $4, $5)
      RETURNING ${AGENTE_COLUMNS}`,
-    [email.trim().toLowerCase(), passwordHash, nombre.trim(), n8nWebhookUrl]
+    [email.trim().toLowerCase(), passwordHash, nombre.trim(), n8nWebhookUrl, n8nEventos]
   );
   return rows[0];
 }
 
 export async function actualizarAgenteIA(
   id: string,
-  d: { nombre?: string; n8nWebhookUrl?: string | null; activo?: boolean }
+  d: { nombre?: string; n8nWebhookUrl?: string | null; activo?: boolean; n8nEventos?: string[] }
 ): Promise<AgenteIA | null> {
   // `n8n_webhook_url` puede querer ponerse explícitamente en null (desconectar el agente de n8n
   // sin desactivarlo) — un COALESCE simple no distinguiría eso de "no lo mandaron". Se usa un
@@ -45,11 +49,18 @@ export async function actualizarAgenteIA(
     `UPDATE gozz.users SET
        nombre = COALESCE($2, nombre),
        n8n_webhook_url = CASE WHEN $3 THEN $4 ELSE n8n_webhook_url END,
-       activo = COALESCE($5, activo)
+       activo = COALESCE($5, activo),
+       n8n_eventos = COALESCE($6, n8n_eventos)
      WHERE id = $1 AND es_agente_ia = true
      RETURNING ${AGENTE_COLUMNS}`,
-    [id, d.nombre ?? null, d.n8nWebhookUrl !== undefined, d.n8nWebhookUrl ?? null, d.activo ?? null]
+    [id, d.nombre ?? null, d.n8nWebhookUrl !== undefined, d.n8nWebhookUrl ?? null, d.activo ?? null, d.n8nEventos ?? null]
   );
+  return rows[0] ?? null;
+}
+
+/** Para asignar desde n8n: humano o agente, pero activo. */
+export async function usuarioActivo(id: string): Promise<{ id: string } | null> {
+  const rows = await query<{ id: string }>("SELECT id FROM gozz.users WHERE id = $1 AND activo = true", [id]);
   return rows[0] ?? null;
 }
 

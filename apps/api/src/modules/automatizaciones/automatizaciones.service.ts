@@ -5,8 +5,7 @@ import * as repo from "./automatizaciones.repository.js";
 import * as whatsappRepo from "../whatsapp/whatsapp.repository.js";
 import * as whatsappService from "../whatsapp/whatsapp.service.js";
 import { enviarEmailSimple } from "../../lib/enviar-email-simple.js";
-
-const N8N_WEBHOOK_SECRET = process.env.N8N_WEBHOOK_SECRET || "";
+import * as n8n from "./n8n-webhooks.js";
 
 // ---------------------------------------------------------------------------
 // Agentes de IA
@@ -14,11 +13,11 @@ const N8N_WEBHOOK_SECRET = process.env.N8N_WEBHOOK_SECRET || "";
 
 export const listarAgentesIA = repo.listAgentesIA;
 
-export async function crearAgenteIA(nombre: string, email: string, n8nWebhookUrl: string | null) {
-  return repo.crearAgenteIA(nombre, email, n8nWebhookUrl);
+export async function crearAgenteIA(nombre: string, email: string, n8nWebhookUrl: string | null, n8nEventos: string[] = []) {
+  return repo.crearAgenteIA(nombre, email, n8nWebhookUrl, n8nEventos);
 }
 
-export async function actualizarAgenteIA(id: string, d: { nombre?: string; n8nWebhookUrl?: string | null; activo?: boolean }) {
+export async function actualizarAgenteIA(id: string, d: { nombre?: string; n8nWebhookUrl?: string | null; activo?: boolean; n8nEventos?: string[] }) {
   const actualizado = await repo.actualizarAgenteIA(id, d);
   if (!actualizado) throw new Error("Agente de IA no encontrado");
   return actualizado;
@@ -73,11 +72,15 @@ export async function evaluarReglasParaMensaje(conversacionId: string, mensaje: 
     }
 
     if (regla.agente_webhook_url) {
-      await notificarAgenteN8n(regla.agente_webhook_url, {
+      // Cola firmada con reintentos (n8n-webhooks.ts). `conversacion_id`/`agente_id`/`regla`/
+      // `mensaje` se mantienen en la raíz: los workflows armados antes de esto los leen así.
+      const contexto = await n8n.construirContexto(conversacionId);
+      await n8n.encolar(regla.agente_id, regla.agente_webhook_url, "regla.disparada", {
         conversacion_id: conversacionId,
         agente_id: regla.agente_id,
         regla: regla.nombre,
         mensaje: { tipo: mensaje.tipo, contenido: mensaje.contenido },
+        ...(contexto ?? {}),
       });
     }
   } catch (e: any) {
@@ -85,28 +88,65 @@ export async function evaluarReglasParaMensaje(conversacionId: string, mensaje: 
   }
 }
 
-async function notificarAgenteN8n(webhookUrl: string, payload: Record<string, unknown>): Promise<void> {
-  try {
-    await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Gozz-Secret": N8N_WEBHOOK_SECRET },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(8000),
-    });
-  } catch (e: any) {
-    console.error("[automatizaciones] no se pudo notificar al webhook de n8n:", e?.message || e);
-  }
-}
-
 /** El workflow de n8n llama esto para responder EN NOMBRE del agente de IA — reutiliza el mismo
  * `enviarMensaje` que usa cualquier agente humano, así que el mensaje sale, se ve, y se cuenta
  * exactamente igual (mismo estado de entrega, mismo socket en vivo). */
-export async function recibirRespuestaAgente(conversacionId: string, agenteId: string, contenido: string) {
+export async function recibirRespuestaAgente(
+  conversacionId: string,
+  agenteId: string,
+  contenido: string | null,
+  media?: { tipo: "imagen" | "video" | "audio" | "archivo"; archivoUrl: string; archivoNombre: string; archivoTamanio: number }
+) {
   const agente = await repo.getAgenteIA(agenteId);
   if (!agente) throw new Error("Agente de IA no encontrado");
   if (!agente.activo) throw new Error("Agente de IA desactivado");
+  if (!(await whatsappRepo.getConversacion(conversacionId))) throw new Error("Conversación no encontrada");
+  if (media) {
+    return whatsappService.enviarMensaje(conversacionId, agenteId, {
+      tipo: media.tipo, contenido, archivoUrl: media.archivoUrl, archivoNombre: media.archivoNombre, archivoTamanio: media.archivoTamanio,
+    });
+  }
+  if (!contenido?.trim()) throw new Error("El mensaje está vacío");
   return whatsappService.enviarMensaje(conversacionId, agenteId, { tipo: "texto", contenido });
 }
+
+// ---------------------------------------------------------------------------
+// Acciones de n8n sobre una conversación (API /api/n8n/*)
+// ---------------------------------------------------------------------------
+
+/** Etapa por id o por key (`apertura`, `oferta`...) — en n8n es más cómodo escribir la key. */
+export async function n8nCambiarEtapa(conversacionId: string, etapa: { id?: string; key?: string }) {
+  const etapas = await whatsappRepo.listEtapas();
+  const destino = etapas.find((e) => (etapa.id && e.id === etapa.id) || (etapa.key && e.key === etapa.key));
+  if (!destino) throw new Error("Etapa no encontrada");
+  if (!(await whatsappRepo.getConversacion(conversacionId))) throw new Error("Conversación no encontrada");
+  return whatsappService.cambiarEtapa(conversacionId, destino.id);
+}
+
+/** Etiqueta por id o por nombre (sin distinguir mayúsculas). Con `crear`, una etiqueta que no
+ * existe se crea — útil para que la IA clasifique ("interesado", "precio") sin configurar antes. */
+export async function n8nEtiquetar(conversacionId: string, d: { tagId?: string; nombre?: string; accion: "agregar" | "quitar"; crear?: boolean }) {
+  if (!(await whatsappRepo.getConversacion(conversacionId))) throw new Error("Conversación no encontrada");
+  const tags = await whatsappRepo.listTags();
+  let tag = tags.find((t) => (d.tagId && t.id === d.tagId) || (d.nombre && t.nombre.toLowerCase() === d.nombre.trim().toLowerCase()));
+  if (!tag && d.accion === "agregar" && d.crear && d.nombre) tag = await whatsappService.crearTag(d.nombre.trim(), "#5750E8");
+  if (!tag) throw new Error("Etiqueta no encontrada");
+  return d.accion === "agregar" ? whatsappService.agregarTag(conversacionId, tag.id) : whatsappService.quitarTag(conversacionId, tag.id);
+}
+
+/** Asignar a un usuario (o a otro agente), o `null` para soltarla — "pasar a humano". */
+export async function n8nAsignar(conversacionId: string, usuarioId: string | null) {
+  if (!(await whatsappRepo.getConversacion(conversacionId))) throw new Error("Conversación no encontrada");
+  if (usuarioId) {
+    const u = await repo.usuarioActivo(usuarioId);
+    if (!u) throw new Error("Usuario no encontrado o inactivo");
+  }
+  return whatsappService.asignar(conversacionId, usuarioId);
+}
+
+export const n8nContexto = n8n.construirContexto;
+export const emitirEventoN8n = n8n.emitir;
+export const procesarEntregasN8n = n8n.procesarPendientes;
 
 // ---------------------------------------------------------------------------
 // Recordatorios

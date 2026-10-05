@@ -4,7 +4,15 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Bot } from "@/lib/bootstrap-icons";
 import { Button } from "@/components/ui/Button";
 import { toast } from "sonner";
-import type { AgenteIA } from "./types";
+import type { AgenteIA, N8nEvento } from "./types";
+
+/** Eventos que el agente puede recibir en su webhook, además de los avisos de sus reglas. */
+const EVENTOS: { id: N8nEvento; titulo: string; detalle: string }[] = [
+  { id: "mensaje.recibido", titulo: "Mensaje recibido", detalle: "Cada mensaje que escribe un contacto" },
+  { id: "mensaje.estado", titulo: "Estado de mensaje", detalle: "Entregado y leído de lo que se envía" },
+  { id: "conversacion.etapa", titulo: "Cambio de etapa", detalle: "Cuando una conversación avanza en el embudo" },
+  { id: "conversacion.asignada", titulo: "Asignación", detalle: "Cuando se asigna o se suelta una conversación" },
+];
 
 interface Props {
   agente: AgenteIA | null;
@@ -17,6 +25,8 @@ export function AgenteModal({ agente, onClose, onSaved }: Props) {
   const [email, setEmail] = useState(agente?.email || "");
   const [webhookUrl, setWebhookUrl] = useState(agente?.n8n_webhook_url || "");
   const [activo, setActivo] = useState(agente?.activo ?? true);
+  const [eventos, setEventos] = useState<N8nEvento[]>(agente?.n8n_eventos ?? []);
+  const toggleEvento = (id: N8nEvento) => setEventos((cur) => (cur.includes(id) ? cur.filter((e) => e !== id) : [...cur, id]));
   const [guardando, setGuardando] = useState(false);
 
   const guardar = async () => {
@@ -26,8 +36,8 @@ export function AgenteModal({ agente, onClose, onSaved }: Props) {
     try {
       const url = agente ? `/api/automatizaciones/agentes/${agente.id}` : "/api/automatizaciones/agentes";
       const body = agente
-        ? { nombre, n8nWebhookUrl: webhookUrl.trim() || null, activo }
-        : { nombre, email, n8nWebhookUrl: webhookUrl.trim() || null };
+        ? { nombre, n8nWebhookUrl: webhookUrl.trim() || null, activo, n8nEventos: eventos }
+        : { nombre, email, n8nWebhookUrl: webhookUrl.trim() || null, n8nEventos: eventos };
       const r = await fetch(url, {
         method: agente ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -92,6 +102,34 @@ export function AgenteModal({ agente, onClose, onSaved }: Props) {
               />
               <p className="text-[11px] text-neutral-400 mt-1.5">Sin webhook, el agente se puede asignar igual — solo no recibirá aviso automático de n8n.</p>
             </div>
+            {webhookUrl.trim() && (
+              <div>
+                <label className="text-[10px] font-ui uppercase tracking-wider text-neutral-500 block mb-1.5">Qué le avisa GOZZ</label>
+                <p className="text-[11px] text-neutral-400 mb-2">Los avisos de sus reglas llegan siempre. Además puede escuchar:</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {EVENTOS.map((ev) => {
+                    const on = eventos.includes(ev.id);
+                    return (
+                      <button
+                        key={ev.id}
+                        type="button"
+                        onClick={() => toggleEvento(ev.id)}
+                        aria-pressed={on}
+                        className={`text-left rounded-xl border px-3 py-2 transition ${on ? "border-brand-primary/50 bg-brand-primary/10" : "border-black/10 dark:border-white/10 hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"}`}
+                      >
+                        <div className="flex items-center gap-2 text-xs font-semibold">
+                          <span className={`h-3.5 w-3.5 rounded-[5px] border flex items-center justify-center shrink-0 ${on ? "bg-brand-primary border-brand-primary" : "border-neutral-400"}`}>
+                            {on && <span className="h-1.5 w-1.5 rounded-sm bg-white" />}
+                          </span>
+                          {ev.titulo}
+                        </div>
+                        <div className="text-[10.5px] text-neutral-500 mt-0.5 pl-[22px]">{ev.detalle}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {agente && (
               <label className="flex items-center gap-2.5 cursor-pointer">
                 <input type="checkbox" checked={activo} onChange={(e) => setActivo(e.target.checked)} className="h-4 w-4 accent-brand-primary" />

@@ -10,7 +10,15 @@ export interface AgenteIA {
   n8n_webhook_url: string | null;
   activo: boolean;
   created_at: string;
+  /** Eventos a los que está suscrito su webhook, además de los avisos de sus reglas. */
+  n8n_eventos: N8nEvento[];
+  /** Última entrega a su webhook (para mostrar si n8n está respondiendo). */
+  ultima_entrega: { estado: "pendiente" | "entregado" | "fallido"; evento: string; ultimo_status: number | null; ultimo_error: string | null; created_at: string } | null;
 }
+
+/** Eventos que GOZZ puede mandar a n8n. `regla.disparada` llega siempre (es el aviso de una regla
+ * que apunta a ese agente); el resto es por suscripción. */
+export type N8nEvento = "mensaje.recibido" | "mensaje.estado" | "conversacion.etapa" | "conversacion.asignada";
 
 export interface AutomatizacionRegla {
   id: string;

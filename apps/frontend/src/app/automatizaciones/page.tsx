@@ -139,12 +139,30 @@ export default function AutomatizacionesPage() {
                         </div>
                         <div className="text-[11px] text-neutral-500 truncate mt-0.5">{a.email}</div>
                         <div className="flex items-center gap-1.5 text-[11px] mt-1.5">
-                          {a.n8n_webhook_url ? (
-                            <span className="text-brand-green flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" weight="duotone" /> Conectado a n8n</span>
-                          ) : (
+                          {!a.n8n_webhook_url ? (
                             <span className="text-neutral-400 flex items-center gap-1"><XCircle className="h-3.5 w-3.5" /> Sin webhook</span>
+                          ) : a.ultima_entrega?.estado === "fallido" ? (
+                            <span className="text-red-500 flex items-center gap-1" title={a.ultima_entrega.ultimo_error || undefined}>
+                              <XCircle className="h-3.5 w-3.5" /> n8n no responde · {a.ultima_entrega.ultimo_error || "error"}
+                            </span>
+                          ) : a.ultima_entrega?.estado === "pendiente" ? (
+                            <span className="text-amber-500 flex items-center gap-1" title={a.ultima_entrega.ultimo_error || undefined}>
+                              <XCircle className="h-3.5 w-3.5" /> Reintentando aviso a n8n
+                            </span>
+                          ) : (
+                            <span className="text-brand-green flex items-center gap-1">
+                              <CheckCircle2 className="h-3.5 w-3.5" weight="duotone" />
+                              {a.ultima_entrega ? `n8n respondió · ${new Date(a.ultima_entrega.created_at).toLocaleString("es", { dateStyle: "short", timeStyle: "short" })}` : "Conectado a n8n"}
+                            </span>
                           )}
                         </div>
+                        {a.n8n_webhook_url && a.n8n_eventos?.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {a.n8n_eventos.map((ev) => (
+                              <span key={ev} className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-black/5 dark:bg-white/10 text-neutral-500">{ev}</span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       {isAdmin && (
                         <button onClick={() => setAgenteModal({ open: true, agente: a })} className="h-8 w-8 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center shrink-0 text-neutral-400">

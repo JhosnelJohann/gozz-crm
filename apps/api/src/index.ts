@@ -34,7 +34,7 @@ import { registerWhatsAppRoutes } from "./modules/whatsapp/whatsapp.routes.js";
 import { listUsuariosConAcceso as listUsuariosConAccesoWhatsApp } from "./modules/whatsapp/whatsapp.repository.js";
 import { registerAutomatizacionesRoutes } from "./modules/automatizaciones/automatizaciones.routes.js";
 import { startRecordatoriosCron } from "./modules/automatizaciones/automatizaciones.cron.js";
-import { evaluarReglasParaMensaje } from "./modules/automatizaciones/automatizaciones.service.js";
+import { evaluarReglasParaMensaje, emitirEventoN8n } from "./modules/automatizaciones/automatizaciones.service.js";
 
 process.on("uncaughtException", (err) => {
   console.error("[uncaughtException]", err instanceof Error ? err.stack || err.message : err);
@@ -199,6 +199,12 @@ async function startWhatsAppNotifyListener() {
       // no puede tumbar el reenvío a Socket.IO de arriba.
       if (payload.tipo === "mensaje" && payload.conversacion_id && payload.mensaje) {
         evaluarReglasParaMensaje(payload.conversacion_id, payload.mensaje).catch(() => {});
+        if (payload.mensaje.direccion === "entrante") {
+          emitirEventoN8n("mensaje.recibido", payload.conversacion_id, { mensaje: payload.mensaje }).catch(() => {});
+        }
+      }
+      if (payload.tipo === "mensaje_estado" && payload.conversacion_id) {
+        emitirEventoN8n("mensaje.estado", payload.conversacion_id, { mensaje_id: payload.mensaje_id, estado: payload.estado }).catch(() => {});
       }
     });
     await client.query("LISTEN whatsapp_evento");

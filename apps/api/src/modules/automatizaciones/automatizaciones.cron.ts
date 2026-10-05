@@ -10,6 +10,8 @@ export function startRecordatoriosCron(): void {
   _started = true;
   setInterval(() => {
     service.procesarRecordatoriosPendientes().catch((e: any) => console.error("[automatizaciones-cron]", e?.message || e));
+    // Reintentos de avisos a n8n que fallaron (n8n caído, timeout, 5xx) — ver n8n-webhooks.ts.
+    service.procesarEntregasN8n().catch((e: any) => console.error("[automatizaciones-cron] entregas n8n:", e?.message || e));
   }, 60_000);
-  console.log("[automatizaciones] cron de recordatorios iniciado (cada 60s)");
+  console.log("[automatizaciones] cron de recordatorios y reintentos de n8n iniciado (cada 60s)");
 }

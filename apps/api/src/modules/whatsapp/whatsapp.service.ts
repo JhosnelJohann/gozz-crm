@@ -2,6 +2,7 @@
 // tanto las rutas HTTP (proceso gozz-api) como whatsapp-connection-manager.ts (proceso
 // gozz-whatsapp-worker) para persistir lo que el proveedor reporta. Las pruebas corren contra
 // esta capa con `providers/fake.provider.ts`, nunca contra WhatsApp real.
+import { EventEmitter } from "node:events";
 import { query } from "../../shared/db.js";
 import * as repo from "./whatsapp.repository.js";
 import * as oportunidadesService from "../oportunidades/oportunidades.service.js";
@@ -245,12 +246,22 @@ export async function marcarLeida(conversacionId: string, userId: string | null)
   await repo.marcarLeida(conversacionId, userId);
 }
 
+/** Cambios de gestión de una conversación (etapa, asignado) para quien quiera reaccionar a ellos
+ * — hoy Automatizaciones, que los reenvía a n8n como `conversacion.etapa`/`conversacion.asignada`.
+ * Un emisor y no un import directo: automatizaciones ya importa este servicio, y al revés sería
+ * una dependencia circular. Los listeners nunca deben lanzar (ver registerAutomatizacionesRoutes). */
+export const eventosConversacion = new EventEmitter();
+
 export async function cambiarEtapa(conversacionId: string, etapaId: string) {
-  return repo.setEtapa(conversacionId, etapaId);
+  const conversacion = await repo.setEtapa(conversacionId, etapaId);
+  eventosConversacion.emit("etapa", { conversacionId, etapaId });
+  return conversacion;
 }
 
 export async function asignar(conversacionId: string, userId: string | null) {
-  return repo.setAsignado(conversacionId, userId);
+  const conversacion = await repo.setAsignado(conversacionId, userId);
+  eventosConversacion.emit("asignada", { conversacionId, asignadoA: userId });
+  return conversacion;
 }
 
 export async function archivar(conversacionId: string, archivado: boolean) {
