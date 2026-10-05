@@ -31,7 +31,10 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
 
   async sendMessage(conexionId: string, msg: WhatsAppOutgoingMessage): Promise<{ waMessageId: string }> {
     this.sent.push({ conexionId, msg });
-    return { waMessageId: `fake-${randomUUID()}` };
+    return { waMessageId: msg.waMessageId || `fake-${randomUUID()}` };
+  }
+  generarIdMensaje(_conexionId: string): string {
+    return `fake-${randomUUID()}`;
   }
 
   onQr(cb: (conexionId: string, qr: string) => void): void {
@@ -48,6 +51,10 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
   }
   async resolverFotoPerfil(_conexionId: string, jid: string): Promise<string | null> {
     return this.fotosPerfil.get(jid) ?? null;
+  }
+  public leidos: { conexionId: string; jid: string; waMessageIds: string[] }[] = [];
+  async marcarLeidos(conexionId: string, jid: string, waMessageIds: string[]): Promise<void> {
+    this.leidos.push({ conexionId, jid, waMessageIds });
   }
   onContactoResuelto(cb: (conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }) => void): void {
     this.contactoCbs.push(cb);

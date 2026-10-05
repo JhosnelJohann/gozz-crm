@@ -69,7 +69,9 @@ export function createHttpApp(): HttpApp {
       const buf = await readUploadedFileBytes("/uploads/" + rel);
       res.setHeader("Content-Type", guessContentType(rel));
       res.setHeader("Content-Length", String(buf.length));
-      res.setHeader("Cache-Control", "private, max-age=300");
+      // Fotos de perfil de WhatsApp: el nombre lleva el hash del contenido (una foto nueva = URL
+      // nueva), así que el navegador puede guardarlas una semana sin volver a pedirlas.
+      res.setHeader("Cache-Control", rel.startsWith("whatsapp/avatares/") ? "private, max-age=604800, immutable" : "private, max-age=300");
       res.end(buf);
     } catch {
       res.status(404).json({ error: "not_found" });

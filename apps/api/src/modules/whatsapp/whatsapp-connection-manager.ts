@@ -55,12 +55,20 @@ export async function enviarMensajePendiente(mensajeId: string): Promise<void> {
   if (!conversacion) return;
 
   try {
+    // Id asignado y GUARDADO antes de enviar (ver `generarIdMensaje` en la interfaz del proveedor).
+    // Un reintento reutiliza el mismo id: WhatsApp deduplica por id, así que nunca llega doble.
+    let waId = mensaje.wa_message_id;
+    if (!waId) {
+      waId = provider.generarIdMensaje(conversacion.conexion_id);
+      waId = await service.reservarIdEnvio(mensajeId, waId);
+    }
     const { waMessageId } = await provider.sendMessage(conversacion.conexion_id, {
       jid: conversacion.wa_jid,
       tipo: mensaje.tipo,
       contenido: mensaje.contenido,
       archivoUrl: mensaje.archivo_url,
       archivoNombre: mensaje.archivo_nombre,
+      waMessageId: waId,
     });
     await service.registrarConfirmacionEnvio(mensajeId, waMessageId);
   } catch (e: any) {
@@ -79,9 +87,18 @@ export async function reenviarPendientesAlArrancar(): Promise<void> {
 /** Pedido bajo demanda (al listar/abrir una conversación sin foto) — solo hace algo si la
  * conexión dueña sigue activa en este proceso; si no, no pasa nada (se reintentará la próxima
  * vez que se liste/abra). */
-export async function actualizarFotoConversacion(conversacionId: string): Promise<void> {
+export async function actualizarFotoConversacion(conversacionId: string, forzar = false): Promise<void> {
   const conversacion = await repo.getConversacion(conversacionId);
-  if (!conversacion || conversacion.foto_perfil_url) return;
-  const url = await provider.resolverFotoPerfil(conversacion.conexion_id, conversacion.wa_jid);
-  if (url) await service.registrarFotoPerfilResuelta(conversacionId, url);
+  if (!conversacion) return;
+  if (!forzar && !service.fotoNecesitaRefresco(conversacion)) return;
+  const url = await provider.resolverFotoPerfil(conversacion.conexion_id, conversacion.wa_jid, forzar);
+  await service.registrarFotoPerfilResuelta(conversacionId, url);
+}
+
+/** Confirmaciones de lectura hacia WhatsApp (checks azules del lado del contacto) cuando alguien
+ * del equipo abre la conversación en el CRM. */
+export async function marcarLeidosEnWhatsApp(conversacionId: string, waMessageIds: string[]): Promise<void> {
+  const conversacion = await repo.getConversacion(conversacionId);
+  if (!conversacion || !waMessageIds.length) return;
+  await provider.marcarLeidos(conversacion.conexion_id, conversacion.wa_jid, waMessageIds);
 }

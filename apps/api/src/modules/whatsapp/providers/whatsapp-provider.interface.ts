@@ -10,6 +10,8 @@ export interface WhatsAppOutgoingMessage {
   contenido?: string | null;
   archivoUrl?: string | null;
   archivoNombre?: string | null;
+  /** Id de WhatsApp YA asignado (y guardado en BD) antes de enviar — ver `generarIdMensaje`. */
+  waMessageId?: string | null;
 }
 
 export interface WhatsAppIncomingMessage {
@@ -44,6 +46,11 @@ export interface WhatsAppProvider {
   connect(conexionId: string): Promise<void>;
   disconnect(conexionId: string): Promise<void>;
   sendMessage(conexionId: string, msg: WhatsAppOutgoingMessage): Promise<{ waMessageId: string }>;
+  /** Genera el id nativo de WhatsApp de un mensaje ANTES de enviarlo. Se guarda en BD primero para
+   * que (1) el eco `fromMe` que WhatsApp emite del propio envío caiga en la idempotencia por
+   * `wa_message_id` en vez de duplicar el mensaje, y (2) un acuse de "entregado" que llegue antes
+   * de que `sendMessage` resuelva encuentre su mensaje en vez de perderse. */
+  generarIdMensaje(conexionId: string): string;
   onQr(cb: (conexionId: string, qr: string) => void): void;
   onConnectionUpdate(cb: (conexionId: string, update: WhatsAppConnectionUpdate) => void): void;
   onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void): void;
@@ -53,7 +60,10 @@ export interface WhatsAppProvider {
   /** Resolver la foto de perfil bajo demanda (al abrir/listar una conversación que todavía no la
    * tiene) — la resolución automática solo ocurre cuando llega o sale un mensaje nuevo, así que
    * una conversación vieja sin actividad reciente se quedaría sin foto para siempre sin esto. */
-  resolverFotoPerfil(conexionId: string, jid: string): Promise<string | null>;
+  resolverFotoPerfil(conexionId: string, jid: string, forzar?: boolean): Promise<string | null>;
+  /** Avisa a WhatsApp que estos mensajes entrantes ya se leyeron (checks azules del lado del
+   * contacto), igual que WhatsApp Web al abrir el chat. */
+  marcarLeidos(conexionId: string, jid: string, waMessageIds: string[]): Promise<void>;
   /** WhatsApp sincroniza su directorio de contactos (nombre guardado en el teléfono, y a veces el
    * número real detrás de un `@lid`) de forma asíncrona, no bajo pedido — puede llegar mucho
    * después de que una conversación ya existe. Esto avisa cuando eso pasa, para poder corregir una

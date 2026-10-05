@@ -7,14 +7,28 @@ import * as repo from "./whatsapp.repository.js";
 import * as oportunidadesService from "../oportunidades/oportunidades.service.js";
 import type { WhatsAppConnectionUpdate, WhatsAppIncomingMessage } from "./providers/whatsapp-provider.interface.js";
 
-function jidToPhone(jid: string): string {
-  return jid.split("@")[0] || jid;
+/** Una foto se refresca si no hay, si es una URL vieja del CDN de WhatsApp (caduca), o si se
+ * resolvió hace más de 7 días (el contacto pudo cambiarla). */
+const FOTO_REFRESCO_MS = 7 * 24 * 60 * 60 * 1000;
+export function fotoNecesitaRefresco(c: { foto_perfil_url: string | null; foto_actualizada_at?: string | Date | null }): boolean {
+  if (!c.foto_actualizada_at) return true;
+  if (c.foto_perfil_url && !c.foto_perfil_url.startsWith("/uploads/")) return true;
+  return Date.now() - new Date(c.foto_actualizada_at).getTime() > FOTO_REFRESCO_MS;
 }
 
+/** Puente de tiempo real (worker → gozz-api → socket.io). Un fallo transitorio de la conexión a
+ * Postgres no debe perder el evento en vivo: se reintenta una vez antes de rendirse (el frontend
+ * igual se resincroniza al reconectar y con su sondeo de respaldo). */
 async function notifyEvento(payload: Record<string, any>): Promise<void> {
-  await query("SELECT pg_notify('whatsapp_evento', $1)", [JSON.stringify(payload)]).catch((e) =>
-    console.error("[whatsapp notify]", e?.message)
-  );
+  const body = JSON.stringify(payload);
+  try {
+    await query("SELECT pg_notify('whatsapp_evento', $1)", [body]);
+  } catch (e: any) {
+    await new Promise((r) => setTimeout(r, 250));
+    await query("SELECT pg_notify('whatsapp_evento', $1)", [body]).catch((e2) =>
+      console.error("[whatsapp notify] evento perdido tras reintento:", e2?.message || e?.message)
+    );
+  }
 }
 
 async function notifyEnviar(mensajeId: string): Promise<void> {
@@ -83,7 +97,9 @@ export async function registrarMensajeEntrante(conexionId: string, msg: WhatsApp
   if (!conversacion) {
     const primeraEtapa = await repo.getPrimeraEtapa();
     if (!primeraEtapa) throw new Error("No hay etapas de pipeline de WhatsApp configuradas");
-    const contacto = await repo.buscarContactoPorTelefono(jidToPhone(msg.jid));
+    // Con un `@lid` solo sirve el número real si WhatsApp ya lo reveló — los dígitos del LID son
+    // un identificador opaco, no un teléfono (compararlos vinculaba contactos al azar).
+    const contacto = await repo.buscarContactoPorTelefono(msg.jidReal || msg.jid);
     conversacion = await repo.crearConversacion({
       conexionId,
       jid: msg.jid,
@@ -104,8 +120,15 @@ export async function registrarMensajeEntrante(conexionId: string, msg: WhatsApp
     // todavía no había sincronizado) — si un mensaje posterior sí trae el dato, no hay razón para
     // quedarse sin él para siempre. El nombre solo se completa desde un mensaje que NO es `fromMe`
     // (ver la nota en baileys.provider.ts sobre por qué el pushName de un mensaje propio no sirve).
-    if (!conversacion.foto_perfil_url && msg.fotoPerfilUrl) await repo.actualizarFotoPerfil(conversacion.id, msg.fotoPerfilUrl);
-    if (!conversacion.telefono_real && msg.jidReal) await repo.actualizarTelefonoReal(conversacion.id, msg.jidReal);
+    if (msg.fotoPerfilUrl && msg.fotoPerfilUrl !== conversacion.foto_perfil_url) {
+      if (await repo.setFotoPerfil(conversacion.id, msg.fotoPerfilUrl)) {
+        await notifyEvento({ tipo: "foto_perfil", conexion_id: conexionId, conversacion_id: conversacion.id, foto_perfil_url: msg.fotoPerfilUrl });
+      }
+    }
+    if (!conversacion.telefono_real && msg.jidReal) {
+      await repo.actualizarTelefonoReal(conversacion.id, msg.jidReal);
+      await intentarVincularPorTelefono(conversacion.id, conversacion.contacto_id, msg.jidReal);
+    }
     if (!conversacion.nombre_whatsapp && !msg.fromMe && msg.nombrePerfil) await repo.actualizarNombreSiFalta(conversacion.id, msg.nombrePerfil);
   }
 
@@ -132,13 +155,19 @@ export async function registrarMensajeEntrante(conexionId: string, msg: WhatsApp
   await notifyEvento({ tipo: "mensaje", conexion_id: conexionId, conversacion_id: conversacion.id, mensaje: insertado });
 }
 
+/** Antes de enviar: deja guardado el id de WhatsApp del mensaje (ver `generarIdMensaje`). */
+export async function reservarIdEnvio(mensajeId: string, waMessageId: string): Promise<string> {
+  return repo.reservarWaMessageId(mensajeId, waMessageId);
+}
+
 export async function registrarConfirmacionEnvio(mensajeId: string, waMessageId: string): Promise<void> {
-  await repo.actualizarEstadoMensaje(mensajeId, "enviado", { waMessageId });
-  const m = await repo.getMensaje(mensajeId);
+  // Notifica el estado REAL tras la confirmación: si un acuse de "entregado" llegó primero, el
+  // mensaje ya está en "entregado" y no se retrocede a "enviado".
+  const m = await repo.confirmarEnvio(mensajeId, waMessageId);
   if (!m) return;
   const conv = await repo.getConversacion(m.conversacion_id);
   if (!conv) return;
-  await notifyEvento({ tipo: "mensaje_estado", conexion_id: conv.conexion_id, conversacion_id: m.conversacion_id, mensaje_id: mensajeId, estado: "enviado" });
+  await notifyEvento({ tipo: "mensaje_estado", conexion_id: conv.conexion_id, conversacion_id: m.conversacion_id, mensaje_id: mensajeId, estado: m.estado_entrega });
 }
 
 export async function registrarFalloEnvio(mensajeId: string, error: string): Promise<void> {
@@ -203,22 +232,23 @@ export async function listarConversaciones(conexionId: string, filtros: repo.Fil
   // La resolución automática de la foto solo ocurre cuando llega o sale un mensaje nuevo — una
   // conversación vieja sin actividad reciente se quedaría sin foto para siempre. Al listar (y al
   // abrir, ver abajo) se pide de una vez, sin bloquear la respuesta.
-  for (const c of conversaciones) if (!c.foto_perfil_url) notifyPedirFoto(c.id).catch(() => {});
+  for (const c of conversaciones) if (fotoNecesitaRefresco(c)) notifyPedirFoto(c.id).catch(() => {});
   return conversaciones;
 }
 
 export async function obtenerConversacion(id: string) {
   const conversacion = await repo.getConversacion(id);
   if (!conversacion) return null;
-  if (!conversacion.foto_perfil_url) notifyPedirFoto(id).catch(() => {});
+  if (fotoNecesitaRefresco(conversacion)) notifyPedirFoto(id).catch(() => {});
   const tags = await repo.tagsDeConversacion(id);
   return { ...conversacion, tags };
 }
 
 /** El worker escucha esto y, si tiene una conexión activa para esa conversación, intenta
  * resolver su foto de perfil y la guarda — llamado desde whatsapp-connection-manager.ts. */
-export async function registrarFotoPerfilResuelta(conversacionId: string, url: string): Promise<void> {
-  await repo.actualizarFotoPerfil(conversacionId, url);
+export async function registrarFotoPerfilResuelta(conversacionId: string, url: string | null): Promise<void> {
+  const cambio = await repo.setFotoPerfil(conversacionId, url);
+  if (!cambio) return;
   const conv = await repo.getConversacion(conversacionId);
   if (!conv) return;
   await notifyEvento({ tipo: "foto_perfil", conexion_id: conv.conexion_id, conversacion_id: conversacionId, foto_perfil_url: url });
@@ -233,7 +263,10 @@ export async function registrarContactoResuelto(conexionId: string, jid: string,
   const conversacion = await repo.getConversacionPorJid(conexionId, jid);
   if (!conversacion) return;
   if (info.nombre && !conversacion.nombre_whatsapp) await repo.actualizarNombreSiFalta(conversacion.id, info.nombre);
-  if (info.jidReal && !conversacion.telefono_real) await repo.actualizarTelefonoReal(conversacion.id, info.jidReal);
+  if (info.jidReal && !conversacion.telefono_real) {
+    await repo.actualizarTelefonoReal(conversacion.id, info.jidReal);
+    await intentarVincularPorTelefono(conversacion.id, conversacion.contacto_id, info.jidReal);
+  }
   await notifyEvento({ tipo: "contacto_resuelto", conexion_id: conexionId, conversacion_id: conversacion.id });
 }
 
@@ -241,8 +274,22 @@ export async function listarMensajes(conversacionId: string, limit?: number, bef
   return repo.listMensajes(conversacionId, limit, before);
 }
 
+/** Una conversación que llegó como `@lid` no se pudo vincular al crearse (no había número real).
+ * Cuando WhatsApp revela el número, se reintenta — solo si sigue sin contacto. */
+async function intentarVincularPorTelefono(conversacionId: string, contactoActual: string | null, jidReal: string): Promise<void> {
+  if (contactoActual) return;
+  const contacto = await repo.buscarContactoPorTelefono(jidReal);
+  if (contacto) await repo.vincularContacto(conversacionId, contacto.id, "vinculado_auto");
+}
+
 export async function marcarLeida(conversacionId: string, userId: string | null) {
-  await repo.marcarLeida(conversacionId, userId);
+  const waIds = await repo.marcarLeida(conversacionId, userId);
+  // Confirmación de lectura hacia WhatsApp (checks azules del lado del contacto), como WhatsApp Web.
+  if (waIds.length) {
+    await query("SELECT pg_notify('whatsapp_leer', $1)", [JSON.stringify({ conversacion_id: conversacionId, wa_message_ids: waIds })]).catch((e) =>
+      console.error("[whatsapp notify leer]", e?.message)
+    );
+  }
 }
 
 export async function cambiarEtapa(conversacionId: string, etapaId: string) {

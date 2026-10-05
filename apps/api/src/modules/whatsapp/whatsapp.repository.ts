@@ -2,6 +2,7 @@
 // las rutas HTTP (proceso gozz-api) como desde whatsapp-connection-manager.ts (proceso
 // gozz-whatsapp-worker), vía whatsapp.service.ts.
 import { query } from "../../shared/db.js";
+import { e164DesdeWhatsApp, e164DesdeTextoLibre } from "../../lib/telefono.js";
 import type {
   WhatsAppConexion,
   WhatsAppConexionEstado,
@@ -317,16 +318,20 @@ export async function tocarUltimoMensaje(
   );
 }
 
-export async function marcarLeida(conversacionId: string, userId: string | null): Promise<void> {
+/** Devuelve los `wa_message_id` de los entrantes que se acaban de marcar como vistos — para
+ * mandarle a WhatsApp la confirmación de lectura (checks azules del lado del contacto). */
+export async function marcarLeida(conversacionId: string, userId: string | null): Promise<string[]> {
   await query("UPDATE gozz.whatsapp_conversaciones SET no_leidos_count = 0 WHERE id = $1", [conversacionId]);
   // "Visto por el equipo" — distinto de los checks de envío (`estado_entrega`, que son la
   // confirmación de WhatsApp para lo que NOSOTROS enviamos). Esto es al revés: marca que alguien
   // del equipo ya vio, dentro del CRM, un mensaje que un lead/cliente nos mandó.
-  await query(
+  const rows = await query<{ wa_message_id: string | null }>(
     `UPDATE gozz.whatsapp_mensajes SET visto_at = NOW(), visto_por = $2
-     WHERE conversacion_id = $1 AND direccion = 'entrante' AND visto_at IS NULL`,
+     WHERE conversacion_id = $1 AND direccion = 'entrante' AND visto_at IS NULL
+     RETURNING wa_message_id`,
     [conversacionId, userId]
   );
+  return rows.map((r) => r.wa_message_id).filter((id): id is string => !!id).slice(-100);
 }
 
 export async function setEtapa(conversacionId: string, etapaId: string): Promise<WhatsAppConversacion> {
@@ -371,11 +376,19 @@ export async function marcarConvertida(conversacionId: string, oportunidadId: st
   return rows[0];
 }
 
-export async function actualizarFotoPerfil(conversacionId: string, url: string): Promise<void> {
-  await query(
-    "UPDATE gozz.whatsapp_conversaciones SET foto_perfil_url = $2, updated_at = NOW() WHERE id = $1 AND foto_perfil_url IS NULL",
+/** Guarda la foto resuelta (URL propia `/uploads/...`, nunca la del CDN de WhatsApp) y cuándo se
+ * resolvió. `url = null` = el contacto no tiene foto o es privada: se registra igual para no
+ * volver a pedirla hasta el próximo refresco. Devuelve true si la foto cambió. */
+export async function setFotoPerfil(conversacionId: string, url: string | null): Promise<boolean> {
+  const rows = await query<{ cambio: boolean }>(
+    `UPDATE gozz.whatsapp_conversaciones c
+        SET foto_perfil_url = $2, foto_actualizada_at = NOW()
+       FROM (SELECT foto_perfil_url AS previa FROM gozz.whatsapp_conversaciones WHERE id = $1) p
+      WHERE c.id = $1
+      RETURNING (p.previa IS DISTINCT FROM $2) AS cambio`,
     [conversacionId, url]
   );
+  return !!rows[0]?.cambio;
 }
 
 /** El número real detrás de un `@lid` puede llegar mucho después de creada la conversación (el
@@ -388,7 +401,7 @@ export async function actualizarTelefonoReal(conversacionId: string, telefonoRea
   );
 }
 
-/** Igual que `actualizarFotoPerfil`, pero para el nombre — corrige una conversación que se creó
+/** Completa el nombre — corrige una conversación que se creó
  * sin nombre (o, antes de la corrección del bug de `pushName` en mensajes `fromMe`, con el nombre
  * equivocado) en cuanto WhatsApp comparte el nombre real guardado del contacto. */
 export async function actualizarNombreSiFalta(conversacionId: string, nombre: string): Promise<void> {
@@ -421,20 +434,30 @@ export async function getTelefonoContacto(contactoId: string): Promise<string | 
   return rows[0]?.whatsapp || rows[0]?.telefono || null;
 }
 
-/** Match por teléfono normalizado (últimos 10 dígitos) contra `telefono`/`whatsapp` de contactos_cache. */
-export async function buscarContactoPorTelefono(telefonoCrudo: string): Promise<{ id: string; nombre_completo: string } | null> {
-  const digitos = telefonoCrudo.replace(/\D/g, "").slice(-10);
-  if (digitos.length < 7) return null;
-  const rows = await query<{ id: string; nombre_completo: string }>(
-    `SELECT id, nombre_completo FROM gozz.contactos_cache
+/**
+ * Contacto cuyo `telefono`/`whatsapp` es EXACTAMENTE el mismo número (E.164) que el de WhatsApp.
+ * Prefiltra en SQL por los últimos 7 dígitos (barato) y compara exacto en código con
+ * libphonenumber — ver lib/telefono.ts para por qué "últimos 10 dígitos" no bastaba. Si más de un
+ * contacto distinto coincide, NO elige uno al azar: devuelve null y queda para vincular a mano.
+ */
+export async function buscarContactoPorTelefono(jidODigitos: string): Promise<{ id: string; nombre_completo: string } | null> {
+  const wa = e164DesdeWhatsApp(jidODigitos);
+  if (!wa) return null;
+  const cola = wa.e164.replace(/\D/g, "").slice(-7);
+  const candidatos = await query<{ id: string; nombre_completo: string; telefono: string | null; whatsapp: string | null }>(
+    `SELECT id, nombre_completo, telefono, whatsapp FROM gozz.contactos_cache
      WHERE archivado = false AND (
-       right(regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g'), 10) = $1
-       OR right(regexp_replace(COALESCE(whatsapp, ''), '\\D', '', 'g'), 10) = $1
+       right(regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g'), 7) = $1
+       OR right(regexp_replace(COALESCE(whatsapp, ''), '\\D', '', 'g'), 7) = $1
      )
-     LIMIT 1`,
-    [digitos]
+     LIMIT 50`,
+    [cola]
   );
-  return rows[0] ?? null;
+  const exactos = candidatos.filter((c) =>
+    e164DesdeTextoLibre(c.whatsapp, wa.pais) === wa.e164 || e164DesdeTextoLibre(c.telefono, wa.pais) === wa.e164
+  );
+  if (exactos.length !== 1) return null;
+  return { id: exactos[0].id, nombre_completo: exactos[0].nombre_completo };
 }
 
 // ---------------------------------------------------------------------------
@@ -495,6 +518,31 @@ export async function getMensaje(id: string): Promise<WhatsAppMensaje | null> {
 /** Para las confirmaciones de entrega/lectura de Baileys, que solo traen el `wa_message_id`. */
 export async function getMensajePorWaId(waMessageId: string): Promise<WhatsAppMensaje | null> {
   const rows = await query<WhatsAppMensaje>("SELECT * FROM gozz.whatsapp_mensajes WHERE wa_message_id = $1", [waMessageId]);
+  return rows[0] ?? null;
+}
+
+/** Guarda el id de WhatsApp de un saliente ANTES de enviarlo (ver `generarIdMensaje`). Si ya
+ * tenía uno (reintento), se conserva ese y se devuelve. */
+export async function reservarWaMessageId(mensajeId: string, waMessageId: string): Promise<string> {
+  const rows = await query<{ wa_message_id: string }>(
+    `UPDATE gozz.whatsapp_mensajes SET wa_message_id = COALESCE(wa_message_id, $2)
+      WHERE id = $1 RETURNING wa_message_id`,
+    [mensajeId, waMessageId]
+  );
+  return rows[0]?.wa_message_id ?? waMessageId;
+}
+
+/** WhatsApp aceptó el envío. Pasa a "enviado" SOLO si seguía pendiente/fallido: un acuse de
+ * "entregado"/"leído" pudo llegar antes que esta confirmación y no se debe retroceder. */
+export async function confirmarEnvio(mensajeId: string, waMessageId: string): Promise<WhatsAppMensaje | null> {
+  const rows = await query<WhatsAppMensaje>(
+    `UPDATE gozz.whatsapp_mensajes
+        SET estado_entrega = CASE WHEN estado_entrega IN ('pendiente', 'fallido') THEN 'enviado' ELSE estado_entrega END,
+            wa_message_id = COALESCE(wa_message_id, $2),
+            error_envio = NULL
+      WHERE id = $1 RETURNING *`,
+    [mensajeId, waMessageId]
+  );
   return rows[0] ?? null;
 }
 

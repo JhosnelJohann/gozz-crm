@@ -47,6 +47,8 @@ export interface WhatsAppConversacion {
   wa_jid: string;
   nombre_whatsapp: string | null;
   foto_perfil_url: string | null;
+  /** Cuándo se resolvió la foto por última vez (se refresca cada 7 días). */
+  foto_actualizada_at?: string | null;
   /** Número real detrás de un `@lid` (identificador opaco de WhatsApp), cuando WhatsApp llegó a
    * revelarlo — null si `wa_jid` ya es un número real, o si nunca se pudo resolver. */
   telefono_real: string | null;

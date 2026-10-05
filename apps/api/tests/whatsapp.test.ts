@@ -25,6 +25,8 @@ verificarBasePruebas(process.env.DATABASE_URL || "");
 
 let contador = 0;
 const sufijo = () => `${Date.now().toString(36)}-${++contador}`;
+/** 7 dígitos distintos por llamada (para armar números de teléfono válidos y únicos). */
+const siete = () => String((Date.now() * 7 + ++contador * 7919) % 10_000_000).padStart(7, "3");
 
 // El dump `--schema-only` que arma la base desechable (ver tests/setup/global-setup.ts) copia
 // LAS TABLAS, no las filas del seed (0006_whatsapp_inbox_seed_pipeline_stages.sql es una
@@ -77,7 +79,9 @@ describe("WhatsApp — mensajes entrantes", () => {
   it("crea la conversación en la primera etapa activa y vincula el contacto automáticamente por teléfono", async () => {
     const userId = await usuarioDePruebas();
     const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
-    const digitos = sufijo().replace(/\D/g, "").padEnd(10, "7").slice(0, 10);
+    // Número de EE.UU. VÁLIDO (área 305, central que empieza en 2-9): la vinculación ahora compara
+    // E.164 exacto con libphonenumber, y unos dígitos al azar no siempre forman un número válido.
+    const digitos = `3052${siete().slice(0, 6)}`;
     const contactoId = await crearContactoConTelefono(`+1${digitos}`);
     const jid = `1${digitos}@s.whatsapp.net`;
 
@@ -619,5 +623,168 @@ describe("WhatsApp — FakeWhatsAppProvider (doble de pruebas)", () => {
     const { waMessageId } = await provider.sendMessage("conexion-1", { jid: "521@s.whatsapp.net", tipo: "texto", contenido: "hola" });
     expect(waMessageId).toMatch(/^fake-/);
     expect(provider.sent).toHaveLength(1);
+  });
+
+  it("respeta el id de WhatsApp asignado antes de enviar", async () => {
+    const provider = new FakeWhatsAppProvider();
+    const id = provider.generarIdMensaje("conexion-1");
+    const { waMessageId } = await provider.sendMessage("conexion-1", { jid: "521@s.whatsapp.net", tipo: "texto", contenido: "hola", waMessageId: id });
+    expect(waMessageId).toBe(id);
+  });
+});
+
+async function conversacionNueva(prefijo: string) {
+  const userId = await usuarioDePruebas();
+  const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+  const jid = `${prefijo}${siete()}@s.whatsapp.net`;
+  await service.registrarMensajeEntrante(conexion.id, {
+    jid, waMessageId: `WA-in-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date(),
+  } as any);
+  const conv = await repo.getConversacionPorJid(conexion.id, jid);
+  return { userId, conexion, jid, conv: conv! };
+}
+
+describe("WhatsApp — carreras del envío (Parte G)", () => {
+  it("🔴 un acuse de 'entregado' que llega ANTES de la confirmación de envío no se pierde ni retrocede a 'enviado'", async () => {
+    const { userId, conv } = await conversacionNueva("52155");
+    const mensaje = await service.enviarMensaje(conv.id, userId, { tipo: "texto", contenido: "¿Seguimos?" });
+    const waId = `WA-race-${sufijo()}`;
+    expect(await service.reservarIdEnvio(mensaje.id, waId)).toBe(waId);
+
+    // Orden real posible con Baileys: el DELIVERY_ACK llega antes de que sendMessage resuelva.
+    await service.registrarActualizacionEntrega(waId, "entregado");
+    expect((await repo.getMensaje(mensaje.id))?.estado_entrega).toBe("entregado");
+
+    await service.registrarConfirmacionEnvio(mensaje.id, waId);
+    expect((await repo.getMensaje(mensaje.id))?.estado_entrega).toBe("entregado");
+  });
+
+  it("🔴 el eco fromMe del propio envío que llega ANTES de la confirmación no duplica el mensaje ni lo marca fallido", async () => {
+    const { userId, conexion, jid, conv } = await conversacionNueva("52166");
+    const mensaje = await service.enviarMensaje(conv.id, userId, { tipo: "texto", contenido: "Te mando la info" });
+    const waId = `WA-eco-${sufijo()}`;
+    await service.reservarIdEnvio(mensaje.id, waId);
+
+    await service.registrarMensajeEntrante(conexion.id, {
+      jid, waMessageId: waId, tipo: "texto", contenido: "Te mando la info", timestamp: new Date(), fromMe: true,
+    } as any);
+    await service.registrarConfirmacionEnvio(mensaje.id, waId);
+
+    const mensajes = (await repo.listMensajes(conv.id)).filter((m) => m.wa_message_id === waId);
+    expect(mensajes).toHaveLength(1);
+    expect(mensajes[0].id).toBe(mensaje.id);
+    expect(mensajes[0].estado_entrega).toBe("enviado");
+  });
+
+  it("un reintento conserva el id de WhatsApp ya reservado (WhatsApp deduplica, no llega doble)", async () => {
+    const { userId, conv } = await conversacionNueva("52167");
+    const mensaje = await service.enviarMensaje(conv.id, userId, { tipo: "texto", contenido: "Reintento" });
+    const primero = await service.reservarIdEnvio(mensaje.id, `WA-a-${sufijo()}`);
+    const segundo = await service.reservarIdEnvio(mensaje.id, `WA-b-${sufijo()}`);
+    expect(segundo).toBe(primero);
+  });
+
+  it("un mensaje marcado fallido que en realidad salió pasa a 'enviado' al confirmarse", async () => {
+    const { userId, conv } = await conversacionNueva("52168");
+    const mensaje = await service.enviarMensaje(conv.id, userId, { tipo: "texto", contenido: "Fallido falso" });
+    await service.registrarFalloEnvio(mensaje.id, "timeout");
+    await service.registrarConfirmacionEnvio(mensaje.id, `WA-tarde-${sufijo()}`);
+    const m = await repo.getMensaje(mensaje.id);
+    expect(m?.estado_entrega).toBe("enviado");
+    expect(m?.error_envio).toBeNull();
+  });
+});
+
+describe("WhatsApp — confirmación de lectura hacia WhatsApp (Parte G)", () => {
+  it("marcarLeida devuelve los wa_message_id de los entrantes recién vistos (checks azules del contacto), y solo una vez", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `52199${siete()}@s.whatsapp.net`;
+    const ids = [`WA-l1-${sufijo()}`, `WA-l2-${sufijo()}`];
+    for (const id of ids) {
+      await service.registrarMensajeEntrante(conexion.id, { jid, waMessageId: id, tipo: "texto", contenido: id, timestamp: new Date() } as any);
+    }
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+    const vistos = await repo.marcarLeida(conv!.id, userId);
+    expect([...vistos].sort()).toEqual([...ids].sort());
+    expect(await repo.marcarLeida(conv!.id, userId)).toEqual([]);
+  });
+});
+
+describe("WhatsApp — vinculación por teléfono en E.164 (Parte G)", () => {
+  it("🔴 NO vincula un número de Venezuela con un contacto de EE.UU. que comparte los últimos 10 dígitos", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const local = `412${siete()}`; // 412 = área de Pittsburgh en EE.UU. y prefijo móvil en Venezuela
+    await crearContactoConTelefono(`+1 ${local}`);
+    const jid = `58${local}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, { jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date() } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+    expect(conv?.contacto_id).toBeNull();
+    expect(conv?.contacto_vinculo_estado).toBe("sin_vincular");
+  });
+
+  it("vincula un contacto guardado SIN código de país, interpretándolo con el país del número de WhatsApp", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const local = `414${siete()}`;
+    const contactoId = await crearContactoConTelefono(`0${local.slice(0, 3)}-${local.slice(3)}`);
+    const jid = `58${local}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, { jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date() } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+    expect(conv?.contacto_id).toBe(contactoId);
+  });
+
+  it("si dos contactos distintos tienen el mismo número, no elige uno al azar", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const local = `3052${siete().slice(0, 6)}`;
+    await crearContactoConTelefono(`+1${local}`);
+    await crearContactoConTelefono(`(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`);
+    const jid = `1${local}@s.whatsapp.net`;
+    await service.registrarMensajeEntrante(conexion.id, { jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date() } as any);
+    const conv = await repo.getConversacionPorJid(conexion.id, jid);
+    expect(conv?.contacto_id).toBeNull();
+  });
+
+  it("🔴 un @lid sin número real NO se compara como teléfono; al revelarse el número real, se vincula", async () => {
+    const userId = await usuarioDePruebas();
+    const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
+    const local = `3053${siete().slice(0, 6)}`;
+    const contactoId = await crearContactoConTelefono(`+1${local}`);
+    // LID cuyos últimos dígitos coinciden con el contacto — antes esto lo vinculaba por error.
+    const lid = `98765${local}@lid`;
+    await service.registrarMensajeEntrante(conexion.id, { jid: lid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola", timestamp: new Date() } as any);
+    let conv = await repo.getConversacionPorJid(conexion.id, lid);
+    expect(conv?.contacto_id).toBeNull();
+
+    await service.registrarContactoResuelto(conexion.id, lid, { jidReal: `1${local}@s.whatsapp.net` });
+    conv = await repo.getConversacionPorJid(conexion.id, lid);
+    expect(conv?.contacto_id).toBe(contactoId);
+  });
+});
+
+describe("WhatsApp — fotos de perfil con caché propia (Parte G)", () => {
+  it("fotoNecesitaRefresco: sin resolver, URL vieja del CDN, o más de 7 días → sí; propia y reciente → no", () => {
+    const ahora = new Date().toISOString();
+    const hace8dias = new Date(Date.now() - 8 * 86400_000).toISOString();
+    expect(service.fotoNecesitaRefresco({ foto_perfil_url: null, foto_actualizada_at: null })).toBe(true);
+    expect(service.fotoNecesitaRefresco({ foto_perfil_url: "https://pps.whatsapp.net/x.jpg", foto_actualizada_at: ahora })).toBe(true);
+    expect(service.fotoNecesitaRefresco({ foto_perfil_url: "/uploads/whatsapp/avatares/a.jpg", foto_actualizada_at: hace8dias })).toBe(true);
+    expect(service.fotoNecesitaRefresco({ foto_perfil_url: "/uploads/whatsapp/avatares/a.jpg", foto_actualizada_at: ahora })).toBe(false);
+    // Sin foto (privada) pero resuelta hace poco: no se vuelve a pedir en cada carga.
+    expect(service.fotoNecesitaRefresco({ foto_perfil_url: null, foto_actualizada_at: ahora })).toBe(false);
+  });
+
+  it("una foto nueva del contacto reemplaza la anterior, y 'sin foto' también queda registrado", async () => {
+    const { conv } = await conversacionNueva("52188");
+    await service.registrarFotoPerfilResuelta(conv.id, "/uploads/whatsapp/avatares/v1.jpg");
+    await service.registrarFotoPerfilResuelta(conv.id, "/uploads/whatsapp/avatares/v2.jpg");
+    expect((await repo.getConversacion(conv.id))?.foto_perfil_url).toBe("/uploads/whatsapp/avatares/v2.jpg");
+
+    await service.registrarFotoPerfilResuelta(conv.id, null);
+    const final = await repo.getConversacion(conv.id);
+    expect(final?.foto_perfil_url).toBeNull();
+    expect(final?.foto_actualizada_at).toBeTruthy();
   });
 });

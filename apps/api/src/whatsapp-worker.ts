@@ -37,7 +37,8 @@ async function startListener() {
         if (msg.channel === "whatsapp_iniciar") await cm.iniciarConexion(payload.conexion_id);
         else if (msg.channel === "whatsapp_desconectar") await cm.detenerConexion(payload.conexion_id);
         else if (msg.channel === "whatsapp_enviar") await cm.enviarMensajePendiente(payload.mensaje_id);
-        else if (msg.channel === "whatsapp_pedir_foto") await cm.actualizarFotoConversacion(payload.conversacion_id);
+        else if (msg.channel === "whatsapp_pedir_foto") await cm.actualizarFotoConversacion(payload.conversacion_id, !!payload.forzar);
+        else if (msg.channel === "whatsapp_leer") await cm.marcarLeidosEnWhatsApp(payload.conversacion_id, payload.wa_message_ids || []);
       } catch (e: any) {
         console.error(`[whatsapp-worker] error manejando ${msg.channel}:`, e?.message);
       }
@@ -46,7 +47,8 @@ async function startListener() {
     await client.query("LISTEN whatsapp_desconectar");
     await client.query("LISTEN whatsapp_enviar");
     await client.query("LISTEN whatsapp_pedir_foto");
-    console.log("[whatsapp-worker] LISTEN activo (whatsapp_iniciar / whatsapp_desconectar / whatsapp_enviar / whatsapp_pedir_foto)");
+    await client.query("LISTEN whatsapp_leer");
+    console.log("[whatsapp-worker] LISTEN activo (whatsapp_iniciar / whatsapp_desconectar / whatsapp_enviar / whatsapp_pedir_foto / whatsapp_leer)");
   } catch (e: any) {
     console.error("[whatsapp-worker] no se pudo iniciar el listener, reintentando:", e?.message || e);
     setTimeout(() => { startListener().catch(() => {}); }, 5000);

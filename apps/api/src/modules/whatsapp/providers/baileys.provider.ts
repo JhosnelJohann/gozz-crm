@@ -7,6 +7,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
+  generateMessageIDV2,
   proto,
   type WASocket,
   type WAMessage,
@@ -17,6 +18,8 @@ import fs from "fs";
 import type { WhatsAppMensajeEstado } from "@gozz/shared-types";
 import { UPLOADS_ROOT, shard, readUploadedFileBytes, putUploadedBytesToR2 } from "../../../lib/storage.js";
 import { usePostgresAuthState, clearAuthState } from "./postgres-auth-state.js";
+import { aOggOpus } from "../audio-transcode.js";
+import { createHash } from "crypto";
 import type {
   WhatsAppProvider,
   WhatsAppOutgoingMessage,
@@ -31,6 +34,15 @@ const logger = pino({ level: process.env.WHATSAPP_LOG_LEVEL || "silent" });
  * colgó silenciosamente (p. ej. el handshake con los servidores de WhatsApp) y hay que forzar el
  * cierre para no dejar `connect()` bloqueado para siempre en esa conexión. */
 const CONNECT_WATCHDOG_MS = 40_000;
+
+/** Las URL de foto de perfil que da WhatsApp (pps.whatsapp.net) son FIRMADAS Y CADUCAN en días —
+ * guardarlas tal cual era la causa de fotos rotas que caían a iniciales. Se descarga la imagen una
+ * vez y se guarda en almacenamiento propio (disco + R2), con un nombre que incluye el hash del
+ * contenido (cacheable como inmutable). El caché en memoria evita repetir la consulta por cada
+ * mensaje del mismo contacto, pero expira para detectar cuando el contacto cambia su foto. */
+const FOTO_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const FOTO_CACHE_MAX = 5000;
+const FOTO_MAX_BYTES = 2 * 1024 * 1024;
 
 const EXT_MIME: Record<string, string> = {
   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
@@ -80,7 +92,7 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
   /** Evita pedir la foto de perfil por cada mensaje del mismo jid — se resuelve una sola vez por
    * proceso (si falla o el usuario tiene la foto privada, se cachea `null` igual: reintentar en
    * cada mensaje entrante no vale la pena). */
-  private fotoPerfilCache = new Map<string, string | null>();
+  private fotoPerfilCache = new Map<string, { url: string | null; at: number }>();
   /** Directorio de contactos por conexión: mapea tanto el `@lid` como el número real de un
    * contacto a su nombre guardado en el teléfono y al número real (cuando WhatsApp lo revela vía
    * `contacts.*`/`chats.phoneNumberShare`). Ni Baileys ni WhatsApp garantizan esto por adelantado
@@ -182,9 +194,20 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
     // "enviado", un único check).
     sock.ev.on("messages.update", (updates) => {
       for (const u of updates) {
+        if (!u.key.fromMe) continue; // solo importan los checks de lo que ENVIAMOS
         const waMessageId = u.key.id;
         const estado = estadoDesdeStatus(u.update.status as unknown as number);
         if (waMessageId && estado) this.statusCbs.forEach((cb) => cb(conexionId, waMessageId, estado));
+      }
+    });
+    // Algunos acuses (sobre todo "leído" cuando el contacto abre el chat en otro dispositivo)
+    // llegan como recibo y no como `messages.update` — sin escucharlos, el azul a veces no aparece.
+    sock.ev.on("message-receipt.update", (updates) => {
+      for (const u of updates) {
+        if (!u.key.fromMe || !u.key.id) continue;
+        const r = u.receipt;
+        const estado: WhatsAppMensajeEstado | null = r.readTimestamp || r.playedTimestamp ? "leido" : r.receiptTimestamp ? "entregado" : null;
+        if (estado) this.statusCbs.forEach((cb) => cb(conexionId, u.key.id!, estado));
       }
     });
 
@@ -203,20 +226,69 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
     });
   }
 
-  private async fetchFotoPerfil(sock: WASocket, jid: string): Promise<string | null> {
-    if (this.fotoPerfilCache.has(jid)) return this.fotoPerfilCache.get(jid)!;
-    const url = await sock.profilePictureUrl(jid, "image").catch(() => undefined);
-    const resuelta = url ?? null;
-    this.fotoPerfilCache.set(jid, resuelta);
-    return resuelta;
+  private async fetchFotoPerfil(conexionId: string, sock: WASocket, jid: string, forzar = false): Promise<string | null> {
+    const cacheKey = `${conexionId}:${jid}`;
+    const enCache = this.fotoPerfilCache.get(cacheKey);
+    if (!forzar && enCache && Date.now() - enCache.at < FOTO_CACHE_TTL_MS) return enCache.url;
+
+    const cdnUrl = await sock.profilePictureUrl(jid, "image").catch(() => undefined);
+    const propia = cdnUrl ? await this.persistirFoto(conexionId, jid, cdnUrl) : null;
+
+    this.fotoPerfilCache.delete(cacheKey);
+    this.fotoPerfilCache.set(cacheKey, { url: propia, at: Date.now() });
+    if (this.fotoPerfilCache.size > FOTO_CACHE_MAX) {
+      const masVieja = this.fotoPerfilCache.keys().next().value;
+      if (masVieja) this.fotoPerfilCache.delete(masVieja);
+    }
+    return propia;
+  }
+
+  /** Descarga la foto del CDN de WhatsApp y la guarda como archivo propio. Devuelve la URL propia
+   * (`/uploads/...`), o null si no se pudo — nunca la URL del CDN, que caduca. */
+  private async persistirFoto(conexionId: string, jid: string, cdnUrl: string): Promise<string | null> {
+    try {
+      const r = await fetch(cdnUrl, { signal: AbortSignal.timeout(10_000) });
+      if (!r.ok) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (!buf.length || buf.length > FOTO_MAX_BYTES) return null;
+      const jidHash = createHash("sha1").update(jid).digest("hex").slice(0, 16);
+      const contenidoHash = createHash("sha1").update(buf).digest("hex").slice(0, 12);
+      const dirRel = `whatsapp/avatares/${shard(conexionId)}/${conexionId}`;
+      const filename = `${jidHash}-${contenidoHash}.jpg`;
+      const url = `/uploads/${dirRel}/${filename}`;
+      const abs = path.join(UPLOADS_ROOT, dirRel, filename);
+      if (!fs.existsSync(abs)) {
+        await fs.promises.mkdir(path.dirname(abs), { recursive: true });
+        await fs.promises.writeFile(abs, buf);
+        putUploadedBytesToR2(url, buf, "image/jpeg").catch((e: any) =>
+          console.error(`[baileys ${conexionId}] no se pudo subir la foto de perfil a R2:`, e?.message)
+        );
+      }
+      return url;
+    } catch (e: any) {
+      console.error(`[baileys ${conexionId}] no se pudo descargar la foto de perfil:`, e?.message);
+      return null;
+    }
   }
 
   /** Versión pública, para resolver bajo demanda (whatsapp-connection-manager.ts) una conversación
    * que no tiene foto porque no tuvo actividad desde que se agregó esta función. */
-  async resolverFotoPerfil(conexionId: string, jid: string): Promise<string | null> {
+  async resolverFotoPerfil(conexionId: string, jid: string, forzar = false): Promise<string | null> {
     const sock = this.sockets.get(conexionId);
     if (!sock) return null;
-    return this.fetchFotoPerfil(sock, jid);
+    return this.fetchFotoPerfil(conexionId, sock, jid, forzar);
+  }
+
+  /** Confirmaciones de lectura hacia WhatsApp (los checks azules que ve el contacto) — igual que
+   * WhatsApp Web al abrir un chat. Best-effort: si la conexión no está activa, no pasa nada. */
+  generarIdMensaje(conexionId: string): string {
+    return generateMessageIDV2(this.sockets.get(conexionId)?.user?.id);
+  }
+
+  async marcarLeidos(conexionId: string, jid: string, waMessageIds: string[]): Promise<void> {
+    const sock = this.sockets.get(conexionId);
+    if (!sock || !waMessageIds.length) return;
+    await sock.readMessages(waMessageIds.map((id) => ({ remoteJid: jid, id, fromMe: false })));
   }
 
   private async handleIncoming(conexionId: string, sock: WASocket, msg: WAMessage): Promise<void> {
@@ -260,7 +332,7 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
       }
     }
 
-    const fotoPerfilUrl = await this.fetchFotoPerfil(sock, jid);
+    const fotoPerfilUrl = await this.fetchFotoPerfil(conexionId, sock, jid);
     const fromMe = !!msg.key.fromMe;
     const contacto = this.dirDe(conexionId).get(jid);
     // OJO: `msg.pushName` en un mensaje `fromMe` es el nombre de la CUENTA CONECTADA (el vendedor),
@@ -314,13 +386,18 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
       const filename = path.basename(msg.archivoUrl);
       if (msg.tipo === "imagen") content = { image: buffer, caption: msg.contenido || undefined };
       else if (msg.tipo === "video") content = { video: buffer, caption: msg.contenido || undefined };
-      else if (msg.tipo === "audio") content = { audio: buffer, mimetype: guessMime(filename), ptt: false };
+      else if (msg.tipo === "audio") {
+        // Siempre como nota de voz (PTT) en OGG/Opus — el único formato que WhatsApp reproduce
+        // como tal. Ver audio-transcode.ts para por qué el webm/m4a del navegador no sirve.
+        const { buffer: ogg, segundos } = await aOggOpus(buffer);
+        content = { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true, seconds: segundos };
+      }
       else content = { document: buffer, fileName: msg.archivoNombre || filename, mimetype: guessMime(filename), caption: msg.contenido || undefined };
     } else {
       throw new Error("Mensaje sin contenido ni archivo");
     }
 
-    const sent = await sock.sendMessage(msg.jid, content);
+    const sent = await sock.sendMessage(msg.jid, content, msg.waMessageId ? { messageId: msg.waMessageId } : undefined);
     if (!sent?.key?.id) throw new Error("WhatsApp no confirmó el envío");
     return { waMessageId: sent.key.id };
   }
