@@ -105,7 +105,7 @@ export function ConversationComposer({ onSend, disabled }: Props) {
         disabled={disabled}
         placeholder={disabled ? "Conecta el número para poder responder" : "Escribe un mensaje…"}
         rows={1}
-        className="flex-1 min-h-[40px] max-h-32 resize-none py-2.5 px-4 rounded-xl bg-bg-surface-2 dark:bg-white/[0.05] border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary/40 disabled:opacity-50"
+        className="flex-1 min-h-[42px] max-h-32 resize-none py-2.5 px-4 rounded-[22px] bg-bg-surface-2 dark:bg-white/[0.05] border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:border-brand-primary/50 focus:ring-4 focus:ring-brand-primary/15 transition-shadow disabled:opacity-50"
       />
       {/* Mic/enviar dinámico: la nota de voz reemplaza al botón de enviar mientras el campo de
           texto está vacío, igual que en WhatsApp real y que ya hace `ChatComposer.tsx`. */}
@@ -116,7 +116,7 @@ export function ConversationComposer({ onSend, disabled }: Props) {
         onClick={enviarTexto}
         disabled={disabled || enviando || !texto.trim()}
         className={cn(
-          "h-10 w-10 rounded-xl gradient-orange text-white flex items-center justify-center shrink-0 shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-40 disabled:pointer-events-none disabled:translate-y-0 transition-all",
+          "wa-act flex items-center justify-center shrink-0 disabled:opacity-40 disabled:pointer-events-none",
           !texto.trim() && "hidden"
         )}
       >

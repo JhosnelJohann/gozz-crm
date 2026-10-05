@@ -2,20 +2,23 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Eye, AlertCircle, MapPin, User, BarChart3, Download, Ban, Pencil, Loader2 } from "@/lib/bootstrap-icons";
-import { MessageStatus, type Status } from "@/components/chat/MessageStatus";
 import { FileMessage } from "@/components/chat/FileMessage";
 import { AudioMessage } from "@/components/chat/AudioMessage";
 import type { WhatsAppMensaje } from "./types";
 
 /** Igual que WhatsApp: reloj = saliendo, ✓ gris = lo recibió el servidor de WhatsApp, ✓✓ gris =
- * llegó al teléfono del contacto, ✓✓ azul = lo leyó. */
-function estadoToStatus(e: WhatsAppMensaje["estado_entrega"]): Status {
-  if (e === "leido") return "read";
-  if (e === "entregado") return "delivered";
-  if (e === "enviado") return "sent";
-  if (e === "pendiente") return "pending";
-  if (e === "fallido") return "failed";
-  return "sent";
+ * llegó al teléfono del contacto, ✓✓ azul = lo leyó. Los trazos se DIBUJAN al cambiar de estado
+ * (stroke-dashoffset, ver .wa-tk en globals.css). */
+const TK_ESTADO: Record<string, string> = { pendiente: "pending", enviado: "sent", entregado: "delivered", leido: "read" };
+export function WaTicks({ estado }: { estado: WhatsAppMensaje["estado_entrega"] }) {
+  const s = TK_ESTADO[estado] || "sent";
+  const label = estado === "leido" ? "Leído" : estado === "entregado" ? "Entregado" : estado === "pendiente" ? "Enviando" : "Enviado";
+  return (
+    <span className="wa-tk" data-s={s} role="img" aria-label={label} title={label}>
+      <svg className="chk" viewBox="0 0 18 12"><path className="c1" d="M1.5 6.6 4.7 9.6 11 2.6" /><path className="c2" d="M7.4 9.6 13.7 2.6" /></svg>
+      <svg className="clk" viewBox="0 0 12 12" style={{ width: 11, height: 11 }}><circle cx="6" cy="6" r="4.8" strokeWidth="1.4" /><path d="M6 3.4V6l1.7 1.1" strokeWidth="1.4" /></svg>
+    </span>
+  );
 }
 
 const fmtHora = (iso: string) => new Date(iso).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
@@ -173,7 +176,7 @@ export function MessageBubble({ m, esGrupo, animar, onRetry, onDescargar, onIrAC
   const autorClave = m.autor_jid || m.autor_nombre || "";
 
   return (
-    <div className={cn("flex", isMe ? "justify-end" : "justify-start", animar && "wa-bubble-in", reacciones.length > 0 && "mb-3")} data-wa-id={m.wa_message_id || undefined}>
+    <div className={cn("flex", isMe ? "justify-end" : "justify-start", animar && (isMe ? "wa-fly" : "wa-bubble-in"), reacciones.length > 0 && "mb-3")} data-wa-id={m.wa_message_id || undefined}>
       <div
         className={cn(
           "relative max-w-[78%] sm:max-w-[65%] rounded-2xl px-3.5 py-2",
@@ -182,7 +185,7 @@ export function MessageBubble({ m, esGrupo, animar, onRetry, onDescargar, onIrAC
             : isMe
               ? fallido
                 ? "bg-red-50 dark:bg-red-500/10 border border-red-300 dark:border-red-500/30 rounded-br-sm shadow-sm"
-                : "gradient-orange text-white rounded-br-sm shadow-md"
+                : cn("wa-out rounded-br-sm", animar && "wa-glint")
               : "glass-light rounded-bl-sm shadow-sm",
           eliminado && "opacity-75"
         )}
@@ -210,7 +213,7 @@ export function MessageBubble({ m, esGrupo, animar, onRetry, onDescargar, onIrAC
         <div className={cn("flex items-center gap-1 justify-end mt-1 text-[10px]", sticker ? "text-neutral-400" : isMe ? (fallido ? "text-red-600 dark:text-red-400" : "text-white/70") : "text-neutral-400")}>
           {m.editado_at && !eliminado && <span className="inline-flex items-center gap-0.5 italic"><Pencil className="h-2.5 w-2.5" />editado</span>}
           {!fallido && fmtHora(m.created_at)}
-          {isMe && !fallido && <MessageStatus status={estadoToStatus(m.estado_entrega)} />}
+          {isMe && !fallido && <WaTicks estado={m.estado_entrega} />}
           {isMe && fallido && (
             <button type="button" onClick={() => onRetry?.(m)} title="No se pudo enviar — reintentar" className="inline-flex items-center gap-1 font-ui font-bold uppercase tracking-wider hover:underline">
               <AlertCircle className="h-3 w-3" /> No enviado · Reintentar

@@ -31,44 +31,51 @@ function etiquetaDia(iso: string): string {
   return d.toLocaleDateString("es", { day: "numeric", month: "long", year: d.getFullYear() === hoy.getFullYear() ? undefined : "numeric" });
 }
 
-function StagePicker({ etapas, valor, onChange }: { etapas: WhatsAppPipelineStage[]; valor: string | null; onChange: (id: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const actual = etapas.find((e) => e.id === valor);
+/** Cinta del embudo: todas las etapas a la vista, con una píldora "líquida" que se desliza a la
+ * etapa actual. Tocar una etapa mueve la conversación (como arrastrarla en el tablero). */
+function StageRibbon({ etapas, valor, onChange }: { etapas: WhatsAppPipelineStage[]; valor: string | null; onChange: (id: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; width: number } | null>(null);
+  const idx = etapas.findIndex((e) => e.id === valor);
+  const actual = etapas[idx];
+
+  useLayoutEffect(() => {
+    const medir = () => {
+      const seg = ref.current?.querySelectorAll<HTMLButtonElement>("[data-seg]")[idx];
+      setPos(seg ? { left: seg.offsetLeft, width: seg.offsetWidth } : null);
+      seg?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    if (ref.current) ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, [idx, etapas.length]);
+
   return (
-    <div className="relative shrink-0">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        title={actual?.label || "Elegir etapa"}
-        className="h-8 px-2 sm:px-2.5 rounded-lg text-[11px] font-ui font-bold uppercase tracking-wider flex items-center gap-1.5 transition"
-        style={{ backgroundColor: actual ? `${actual.color}1a` : undefined, color: actual?.color }}
-      >
-        {/* Móvil: solo el punto de color — la etiqueta completa ("Conversación activa",
-            "Tomando decisión"...) apretaba el nombre del contacto contra el resto de acciones
-            del header en pantallas angostas. Desde `sm` se ve la etiqueta completa. */}
-        {actual ? (
-          <span className="h-2 w-2 rounded-full shrink-0 sm:hidden" style={{ backgroundColor: actual.color }} />
-        ) : null}
-        <span className="hidden sm:inline">{actual?.label || "Etapa"}</span>
-        <CaretDown className="h-3 w-3 shrink-0" />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-1 z-20 w-52 max-w-[calc(100vw-2rem)] rounded-xl glass-panel py-1 overflow-hidden wa-menu-in">
-            {etapas.map((e) => (
-              <button
-                key={e.id}
-                onClick={() => { onChange(e.id); setOpen(false); }}
-                className="w-full text-left px-3 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-2 transition"
-              >
-                <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: e.color }} />
-                <span className="flex-1">{e.label}</span>
-                {e.id === valor && <Check className="h-3.5 w-3.5 text-brand-primary" />}
-              </button>
-            ))}
-          </div>
-        </>
+    <div ref={ref} role="radiogroup" aria-label="Etapa del embudo" className="wa-ribbon bg-black/[0.035] dark:bg-white/[0.05] border border-black/5 dark:border-white/10">
+      {pos && actual && (
+        <span
+          className="wa-liquid"
+          style={{ left: pos.left, width: pos.width, backgroundColor: actual.color, boxShadow: `0 6px 20px -6px ${actual.color}` }}
+        />
       )}
+      {etapas.map((e, i) => (
+        <button
+          key={e.id}
+          data-seg
+          role="radio"
+          aria-checked={i === idx}
+          title={e.label}
+          onClick={() => e.id !== valor && onChange(e.id)}
+          className={cn(
+            "wa-seg",
+            i === idx ? "text-white" : i < idx ? "text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-white" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+          )}
+        >
+          {i < idx && <span className="inline-block h-1.5 w-1.5 rounded-full mr-1.5 align-middle" style={{ backgroundColor: e.color }} />}
+          {e.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -276,7 +283,9 @@ export function ConversationThread({
         </button>
         <AsignadoPicker usuarios={usuarios} valor={conversacion.asignado_a} onChange={onAsignar} />
         <TagPicker todas={tags} activas={conversacion.tags} onToggle={onToggleTag} onCrear={onCrearTag} />
-        <StagePicker etapas={etapas} valor={conversacion.etapa_id} onChange={onCambiarEtapa} />
+      </div>
+      <div className="shrink-0 px-3 pt-2 pb-1.5 border-b border-black/5 dark:border-white/10">
+        <StageRibbon etapas={etapas} valor={conversacion.etapa_id} onChange={onCambiarEtapa} />
       </div>
 
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-2 chat-bg" data-lenis-prevent>

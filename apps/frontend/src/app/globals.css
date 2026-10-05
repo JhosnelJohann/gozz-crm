@@ -432,6 +432,66 @@ html.dark .spotlight-card::before {
   background: radial-gradient(circle, rgba(87, 80, 232, 0.25) 0%, transparent 60%);
 }
 
+/* ========== WHATSAPP · PULSO (diseño aprobado del prototipo GOZZ Pulso) ========== */
+/* La aurora de fondo toma el color de la etapa del embudo del chat abierto; el color se
+   interpola suave gracias a @property. */
+@property --wa-c { syntax: '<color>'; inherits: true; initial-value: #5750E8; }
+.wa-aurora { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; transition: --wa-c 1.4s cubic-bezier(0.2, 0.9, 0.25, 1); }
+.wa-aurora i { position: absolute; border-radius: 9999px; filter: blur(90px); opacity: 0.2; }
+html.dark .wa-aurora i { opacity: 0.28; }
+.wa-aurora i:nth-child(1) { width: 46%; aspect-ratio: 1; left: 30%; top: -18%; background: var(--wa-c); animation: wa-drift1 22s ease-in-out infinite; }
+.wa-aurora i:nth-child(2) { width: 38%; aspect-ratio: 1; right: -8%; bottom: -20%; background: color-mix(in oklab, var(--wa-c) 55%, #ff4d7e); animation: wa-drift2 28s ease-in-out infinite; }
+.wa-aurora i:nth-child(3) { width: 30%; aspect-ratio: 1; left: -6%; bottom: 0; background: color-mix(in oklab, var(--wa-c) 60%, #33d1ff); animation: wa-drift1 32s ease-in-out infinite reverse; }
+@keyframes wa-drift1 { 50% { transform: translate(-10%, 12%) scale(1.15); } }
+@keyframes wa-drift2 { 50% { transform: translate(-14%, -10%) scale(0.9); } }
+@keyframes wa-spin { to { transform: rotate(1turn); } }
+
+/* Fila de la bandeja: foco de luz que sigue al cursor. */
+.wa-row { isolation: isolate; }
+.wa-row::after { content: ""; position: absolute; inset: 0; z-index: -1; opacity: 0; transition: opacity 0.3s; pointer-events: none;
+  background: radial-gradient(220px circle at var(--mx, 50%) var(--my, 50%), rgba(87, 80, 232, 0.13), transparent 70%); }
+.wa-row:hover::after { opacity: 1; }
+html.dark .wa-row::after { background: radial-gradient(220px circle at var(--mx, 50%) var(--my, 50%), rgba(129, 120, 255, 0.17), transparent 70%); }
+
+/* Anillo con el color de la etapa alrededor del avatar. */
+.wa-ring { position: relative; flex: none; border-radius: 9999px; padding: 2.5px; background: conic-gradient(from 210deg, var(--ring, #5750E8), color-mix(in oklab, var(--ring, #5750E8) 30%, transparent), var(--ring, #5750E8)); }
+.wa-ring > * { box-shadow: 0 0 0 2px #fff; }
+html.dark .wa-ring > * { box-shadow: 0 0 0 2px #0B0F16; }
+.wa-unread { background: linear-gradient(135deg, #ffb547, #ff4d7e); box-shadow: 0 4px 12px -4px rgba(255, 77, 126, 0.7); animation: wa-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes wa-pop { 0% { transform: scale(0.4); } 60% { transform: scale(1.2); } 100% { transform: scale(1); } }
+
+/* Burbuja propia: gradiente violeta con destello al enviarse. */
+.wa-out { background: linear-gradient(135deg, #5b4dff, #9a3df5); color: #fff; box-shadow: 0 10px 28px -14px #9a3df5; }
+.wa-glint { position: relative; overflow: hidden; }
+.wa-glint::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(120deg, transparent 35%, rgba(255, 255, 255, 0.24) 50%, transparent 65%); background-size: 300% 100%; animation: wa-glint 1.1s 0.15s cubic-bezier(0.2, 0.9, 0.25, 1) both; }
+@keyframes wa-glint { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+.wa-fly { animation: wa-fly 0.55s cubic-bezier(0.2, 1.2, 0.3, 1) both; transform-origin: bottom right; }
+@keyframes wa-fly { from { opacity: 0; transform: translate(24px, 40px) scale(0.5); } 40% { opacity: 1; } }
+
+/* Checks que se dibujan: ✓ enviado → ✓✓ entregado → ✓✓ azul leído. */
+.wa-tk { display: inline-flex; width: 17px; height: 11px; flex: none; }
+.wa-tk svg { width: 17px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.wa-tk path { stroke-dasharray: 14; stroke-dashoffset: 14; transition: stroke-dashoffset 0.38s cubic-bezier(0.2, 0.9, 0.25, 1); }
+.wa-tk[data-s="sent"] .c1, .wa-tk[data-s="delivered"] path, .wa-tk[data-s="read"] path { stroke-dashoffset: 0; }
+.wa-tk[data-s="delivered"] .c2, .wa-tk[data-s="read"] .c2 { transition-delay: 0.1s; }
+.wa-tk[data-s="read"] { color: #7ee3ff; filter: drop-shadow(0 0 4px rgba(126, 227, 255, 0.7)); }
+.wa-tk .clk { display: none; }
+.wa-tk[data-s="pending"] .clk { display: block; animation: wa-spin 1.4s linear infinite; }
+.wa-tk[data-s="pending"] .chk { display: none; }
+
+/* Cinta del embudo con píldora líquida. */
+.wa-ribbon { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(96px, 1fr); gap: 4px; padding: 4px; border-radius: 14px; overflow-x: auto; scrollbar-width: none; }
+.wa-ribbon::-webkit-scrollbar { display: none; }
+.wa-seg { position: relative; z-index: 1; height: 30px; border-radius: 10px; padding: 0 8px; font-size: 11.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 0.35s; }
+.wa-liquid { position: absolute; z-index: 0; top: 4px; bottom: 4px; border-radius: 10px; transition: left 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.6s, box-shadow 0.6s; }
+.wa-liquid::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.35) 50%, transparent 70%); background-size: 250% 100%; animation: wa-sheen 2.8s linear infinite; }
+@keyframes wa-sheen { from { background-position: 125% 0; } to { background-position: -125% 0; } }
+
+/* Botón principal del compositor (enviar). */
+.wa-act { height: 42px; width: 42px; border-radius: 9999px; color: #fff; background: linear-gradient(135deg, #5b4dff, #9a3df5); box-shadow: 0 10px 24px -8px #9a3df5; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); animation: wa-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.wa-act:hover { transform: translateY(-2px) scale(1.04); }
+.wa-act:active { transform: scale(0.9); }
+
 /* ========== WHATSAPP · MICRO-INTERACCIONES ========== */
 /* Cortas (≤200 ms) y con easing de salida: dan sensación de respuesta inmediata sin estorbar al
    chatear rápido. Las desactiva sola la regla global de prefers-reduced-motion de abajo. */
@@ -477,7 +537,10 @@ html.tab-hidden *::after {
 html.tab-hidden .wa-bubble-in,
 html.tab-hidden .wa-menu-in,
 html.tab-hidden .wa-thread-in,
-html.tab-hidden .wa-img-in {
+html.tab-hidden .wa-img-in,
+html.tab-hidden .wa-fly,
+html.tab-hidden .wa-unread,
+html.tab-hidden .wa-act {
   animation: none !important;
 }
 

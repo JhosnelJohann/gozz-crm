@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { Search, Tag as TagIcon, CaretDown, Check, UserCircle } from "@/lib/bootstrap-icons";
+import { Search, Tag as TagIcon, CaretDown, Check, UserCircle, Users2 } from "@/lib/bootstrap-icons";
 import { WhatsappLogo } from "@/lib/bootstrap-icons";
 import { WhatsAppAvatar } from "./WhatsAppAvatar";
 import { nombreVisible } from "@/lib/whatsapp-numero";
@@ -219,18 +219,33 @@ export function ConversationList({
               return (
                 <motion.button
                   key={c.id}
+                  // `layout`: cuando entra un mensaje y la conversación sube al tope, la fila se
+                  // desliza a su nuevo lugar en vez de saltar (FLIP de framer-motion).
+                  layout="position"
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: Math.min(i, 12) * 0.02 }}
+                  transition={{ delay: Math.min(i, 12) * 0.02, layout: { type: "spring", stiffness: 420, damping: 36 } }}
                   onClick={() => onSelect(c)}
+                  onPointerMove={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    e.currentTarget.style.setProperty("--mx", `${e.clientX - r.left}px`);
+                    e.currentTarget.style.setProperty("--my", `${e.clientY - r.top}px`);
+                  }}
                   className={cn(
-                    "w-full flex items-start gap-3 px-3 py-3 text-left transition relative border-b border-black/[0.03] dark:border-white/[0.03]",
-                    active ? "bg-brand-primary/8" : "hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+                    "wa-row w-full flex items-start gap-3 px-3 py-3 text-left transition-colors relative border-b border-black/[0.03] dark:border-white/[0.03]",
+                    active ? "bg-brand-primary/8 dark:bg-white/[0.06]" : "hover:bg-black/[0.015] dark:hover:bg-white/[0.02]"
                   )}
                 >
-                  {active && <span className="absolute left-0 top-0 bottom-0 w-1 bg-brand-primary rounded-r-full" />}
+                  {active && <span className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full" style={{ backgroundColor: etapa?.color || "#5750E8" }} />}
                   <div className="relative shrink-0">
-                    <WhatsAppAvatar fotoUrl={c.foto_perfil_url} nombre={nombreVisible(c)} size={44} />
+                    <span className="wa-ring block" style={{ ["--ring" as any]: etapa?.color || "#5750E8" }} title={etapa?.label}>
+                      <WhatsAppAvatar fotoUrl={c.foto_perfil_url} nombre={nombreVisible(c)} size={42} />
+                    </span>
+                    {c.es_grupo && (
+                      <span title="Grupo" className="absolute -top-1 -left-1 h-[18px] w-[18px] rounded-full bg-white dark:bg-[#1a1d29] shadow flex items-center justify-center text-neutral-500">
+                        <Users2 className="h-3 w-3" />
+                      </span>
+                    )}
                     {c.asignado_a && (
                       <div title={`Asignada a ${c.asignado_nombre || "alguien"}`} className="absolute -bottom-1 -right-1 ring-2 ring-bg-canvas dark:ring-[#0B0F16] rounded-full">
                         <WhatsAppAvatar fotoUrl={c.asignado_foto_url} nombre={c.asignado_nombre || "?"} size={18} />
@@ -242,7 +257,7 @@ export function ConversationList({
                       <div className={cn("text-[13px] truncate flex-1", c.no_leidos_count > 0 ? "font-bold" : "font-medium text-neutral-700 dark:text-neutral-300")}>
                         {nombreVisible(c)}
                       </div>
-                      <div className="text-[10px] text-neutral-400 shrink-0 tabular-nums">{friendlyDate(c.ultimo_mensaje_at)}</div>
+                      <div className={cn("text-[10px] shrink-0 tabular-nums", c.no_leidos_count > 0 ? "text-[#ff4d7e] font-bold" : "text-neutral-400")}>{friendlyDate(c.ultimo_mensaje_at)}</div>
                     </div>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <div className="text-[11.5px] text-neutral-500 truncate flex-1">
@@ -250,7 +265,7 @@ export function ConversationList({
                         {c.ultimo_mensaje_preview || <span className="italic">Sin mensajes</span>}
                       </div>
                       {c.no_leidos_count > 0 && (
-                        <span className="text-[10px] font-bold text-white bg-brand-green rounded-full h-4.5 min-w-[18px] px-1 flex items-center justify-center tabular-nums shrink-0">
+                        <span key={c.no_leidos_count} className="wa-unread text-[10px] font-bold text-white rounded-full h-[19px] min-w-[19px] px-1.5 flex items-center justify-center tabular-nums shrink-0">
                           {c.no_leidos_count > 99 ? "99+" : c.no_leidos_count}
                         </span>
                       )}

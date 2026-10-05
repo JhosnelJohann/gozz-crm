@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { getSocket } from "@/lib/socket";
 import { formatearNumeroWhatsApp } from "@/lib/whatsapp-numero";
 import { setWhatsappActive } from "@/lib/whatsappActive";
+import { celebrar } from "@/lib/celebracion";
 import { WhatsappLogo, List, LayoutGrid } from "@/lib/bootstrap-icons";
 import { ConnectionSwitcher } from "@/components/whatsapp/ConnectionSwitcher";
 import { ConnectWhatsAppModal } from "@/components/whatsapp/ConnectWhatsAppModal";
@@ -502,7 +503,12 @@ function WhatsAppPageInner() {
     const r = await fetch(`/api/whatsapp/conversaciones/${activeConversacion.id}/etapa`, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ etapa_id: etapaId }),
     });
-    if (r.ok) { setActiveConversacion((c) => c ? { ...c, etapa_id: etapaId } : c); loadConversaciones({ silent: true }); }
+    if (r.ok) {
+      setActiveConversacion((c) => c ? { ...c, etapa_id: etapaId } : c);
+      loadConversaciones({ silent: true });
+      const etapa = etapas.find((e) => e.id === etapaId);
+      if (etapa?.es_ganado) { celebrar(undefined, undefined, etapa.color); toast.success("¡Cliente ganado! 🎉"); }
+    } else toast.error("No se pudo cambiar la etapa");
   };
 
   const asignar = async (userId: string | null) => {
@@ -575,7 +581,12 @@ function WhatsAppPageInner() {
   return (
     <AppShell>
       {/* dvh y no vh: en móvil 100vh incluye la barra del navegador y el compositor quedaba tapado. */}
-      <div className="h-[calc(100dvh-4rem)] flex flex-col overflow-hidden relative">
+      <div
+        className="h-[calc(100dvh-4rem)] flex flex-col overflow-hidden relative isolate"
+        style={{ ["--wa-c" as any]: etapas.find((e) => e.id === activeConversacion?.etapa_id)?.color || "#5750E8" }}
+      >
+        {/* Aurora de fondo: toma el color de la etapa del embudo del chat abierto. */}
+        <div className="wa-aurora -z-10" aria-hidden="true"><i /><i /><i /></div>
         {!enVivo && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 wa-menu-in pointer-events-none">
             <div className="flex items-center gap-2 rounded-full glass-panel px-3 py-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400 shadow-md">

@@ -6,6 +6,7 @@ import {
 } from "@dnd-kit/core";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { celebrar } from "@/lib/celebracion";
 import { WhatsAppAvatar } from "./WhatsAppAvatar";
 import { nombreVisible } from "@/lib/whatsapp-numero";
 import type { ConversacionItem } from "./ConversationList";
@@ -138,6 +139,13 @@ export function WhatsappKanban({ conexionId, etapas, onAbrirConversacion }: Prop
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ etapa_id: etapaDestino }),
       });
       if (!r.ok) throw new Error();
+      const destino = etapas.find((x) => x.id === etapaDestino);
+      if (destino?.es_ganado) {
+        const ev = e.activatorEvent as PointerEvent | undefined;
+        const r2 = e.over.rect;
+        celebrar(r2 ? r2.left + r2.width / 2 : ev?.clientX, r2 ? r2.top + 60 : ev?.clientY, destino.color);
+        toast.success("¡Cliente ganado! 🎉");
+      }
     } catch {
       toast.error("No se pudo mover la conversación");
       setConversaciones((cur) => cur ? cur.map((c) => c.id === conversacionId ? { ...c, etapa_id: anterior } : c) : cur);

@@ -17,7 +17,8 @@ interface Props {
 export function WhatsAppAvatar({ fotoUrl, nombre, size = 40, className }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [cargada, setCargada] = useState<string | null>(null);
-  const inicial = (nombre || "?").trim().slice(0, 1).toUpperCase();
+  // Primera letra o número (no un símbolo: "[DEMO] Ana" → "D", "+58 412…" → "5").
+  const inicial = ((nombre || "").match(/[\p{L}\p{N}]/u)?.[0] || "?").toUpperCase();
   const mostrarFoto = !!fotoUrl && error !== fotoUrl;
 
   return (
