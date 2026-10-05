@@ -15,9 +15,17 @@ provider.onQr((conexionId, qr) => {
 provider.onConnectionUpdate((conexionId, update) => {
   service.registrarActualizacionEstado(conexionId, update).catch((e) => console.error(`[whatsapp-cm] registrarActualizacionEstado(${conexionId}):`, e?.message));
 });
-provider.onMessage((conexionId, msg) => {
-  service.registrarMensajeEntrante(conexionId, msg).catch((e) => console.error(`[whatsapp-cm] registrarMensajeEntrante(${conexionId}):`, e?.message));
+// Devuelve la promesa a propósito: al importar el historial el proveedor espera cada mensaje antes
+// del siguiente (miles de inserciones en paralelo saturarían la base).
+provider.onMessage((conexionId, msg) =>
+  service.registrarMensajeEntrante(conexionId, msg).catch((e) => console.error(`[whatsapp-cm] registrarMensajeEntrante(${conexionId}):`, e?.message))
+);
+provider.onMensajeModificado((conexionId, mod) => {
+  service.registrarModificacion(conexionId, mod).catch((e) => console.error(`[whatsapp-cm] registrarModificacion(${mod.objetivoId}):`, e?.message));
 });
+provider.onChats((conexionId, chats, opts) =>
+  service.registrarChats(conexionId, chats, opts).catch((e) => console.error(`[whatsapp-cm] registrarChats(${conexionId}):`, e?.message))
+);
 provider.onMessageStatusUpdate((_conexionId, waMessageId, estado) => {
   if (estado !== "entregado" && estado !== "leido") return;
   service.registrarActualizacionEntrega(waMessageId, estado).catch((e) => console.error(`[whatsapp-cm] registrarActualizacionEntrega(${waMessageId}):`, e?.message));
@@ -25,6 +33,19 @@ provider.onMessageStatusUpdate((_conexionId, waMessageId, estado) => {
 provider.onContactoResuelto((conexionId, jid, info) => {
   service.registrarContactoResuelto(conexionId, jid, info).catch((e) => console.error(`[whatsapp-cm] registrarContactoResuelto(${jid}):`, e?.message));
 });
+
+/** Baja la media de un mensaje guardado sin archivo (historial o descarga fallida), al pedirla. */
+export async function descargarMediaMensaje(mensajeId: string): Promise<void> {
+  const m = await repo.getMediaPendiente(mensajeId);
+  if (!m || m.archivo_url || !m.media_meta) return;
+  try {
+    const meta = typeof m.media_meta === "string" ? m.media_meta : JSON.stringify(m.media_meta);
+    const r = await provider.descargarMedia(m.conexion_id, meta);
+    await service.registrarMediaDescargada(mensajeId, r);
+  } catch (e: any) {
+    await service.registrarFalloDescarga(mensajeId, e?.message || "No se pudo descargar");
+  }
+}
 
 export async function iniciarConexion(conexionId: string): Promise<void> {
   await provider.connect(conexionId);

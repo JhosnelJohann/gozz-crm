@@ -5,7 +5,8 @@
 import { query } from "../../shared/db.js";
 import * as repo from "./whatsapp.repository.js";
 import * as oportunidadesService from "../oportunidades/oportunidades.service.js";
-import type { WhatsAppConnectionUpdate, WhatsAppIncomingMessage } from "./providers/whatsapp-provider.interface.js";
+import type { WhatsAppConnectionUpdate, WhatsAppIncomingMessage, WhatsAppMensajeModificado, WhatsAppChatInfo, WhatsAppMediaDescargada } from "./providers/whatsapp-provider.interface.js";
+import { previewDe } from "./mensaje-parser.js";
 
 /** Una foto se refresca si no hay, si es una URL vieja del CDN de WhatsApp (caduca), o si se
  * resolvió hace más de 7 días (el contacto pudo cambiarla). */
@@ -20,7 +21,12 @@ export function fotoNecesitaRefresco(c: { foto_perfil_url: string | null; foto_a
  * Postgres no debe perder el evento en vivo: se reintenta una vez antes de rendirse (el frontend
  * igual se resincroniza al reconectar y con su sondeo de respaldo). */
 async function notifyEvento(payload: Record<string, any>): Promise<void> {
-  const body = JSON.stringify(payload);
+  let body = JSON.stringify(payload);
+  // pg_notify rechaza más de 8000 bytes: un texto largo o una encuesta grande perdía el evento en
+  // vivo. Si no cabe, viaja solo el id y la bandeja recarga ese mensaje (`recargar`).
+  if (Buffer.byteLength(body) > 7500 && payload.mensaje?.id) {
+    body = JSON.stringify({ ...payload, mensaje: { id: payload.mensaje.id }, recargar: true });
+  }
   try {
     await query("SELECT pg_notify('whatsapp_evento', $1)", [body]);
   } catch (e: any) {
@@ -88,54 +94,67 @@ export async function registrarActualizacionEstado(conexionId: string, update: W
   await notifyEvento({ tipo: "estado", conexion_id: conexionId, estado: update.estado, telefono: update.telefono ?? null, error: update.motivoError ?? null });
 }
 
+/** Mientras se importa el historial llegan miles de mensajes: en vez de un evento en vivo por
+ * cada uno, la bandeja recibe un aviso "historial" como mucho cada 3 s y se recarga. */
+const historialTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function avisarHistorial(conexionId: string): void {
+  if (historialTimers.has(conexionId)) return;
+  historialTimers.set(conexionId, setTimeout(() => {
+    historialTimers.delete(conexionId);
+    notifyEvento({ tipo: "historial", conexion_id: conexionId }).catch(() => {});
+  }, 3000));
+}
+
 /**
- * Un mensaje entrante crea la conversación si no existía (con intento de vinculación automática
- * a un contacto por teléfono) y persiste el mensaje de forma idempotente por `wa_message_id`.
+ * Un mensaje entrante (o propio enviado desde el teléfono, o importado del historial) crea la
+ * conversación si no existía (con vinculación automática a un contacto por teléfono en chats
+ * individuales) y persiste el mensaje de forma idempotente por `wa_message_id`.
  */
 export async function registrarMensajeEntrante(conexionId: string, msg: WhatsAppIncomingMessage): Promise<void> {
+  const esGrupo = msg.esGrupo ?? msg.jid.endsWith("@g.us");
   let conversacion = await repo.getConversacionPorJid(conexionId, msg.jid);
   if (!conversacion) {
     const primeraEtapa = await repo.getPrimeraEtapa();
     if (!primeraEtapa) throw new Error("No hay etapas de pipeline de WhatsApp configuradas");
-    // Con un `@lid` solo sirve el número real si WhatsApp ya lo reveló — los dígitos del LID son
-    // un identificador opaco, no un teléfono (compararlos vinculaba contactos al azar).
-    const contacto = await repo.buscarContactoPorTelefono(msg.jidReal || msg.jid);
+    // Con un `@lid` solo sirve el número real si WhatsApp ya lo reveló: los dígitos del LID son un
+    // identificador opaco, no un teléfono. Un grupo no se vincula a un contacto.
+    const contacto = esGrupo ? null : await repo.buscarContactoPorTelefono(msg.jidReal || msg.jid);
     conversacion = await repo.crearConversacion({
       conexionId,
       jid: msg.jid,
-      // Si el primer mensaje del hilo lo mandó el dueño de la conexión desde el teléfono
-      // (`fromMe`), su `nombrePerfil` es SU propio nombre, no el del contacto — nombrar así la
-      // conversación fue el bug reportado ("aparece mi propio nombre"). Sin nombre de sobra, se
-      // completará solo en cuanto llegue un mensaje real del contacto (ver la rama de abajo) o el
-      // directorio de contactos de WhatsApp lo resuelva (`registrarContactoResuelto`).
-      nombreWhatsapp: !msg.fromMe ? msg.nombrePerfil ?? null : null,
+      // En un chat individual, si el primer mensaje lo mandó el dueño de la conexión (`fromMe`),
+      // su `nombrePerfil` es SU propio nombre: no nombra la conversación. En un grupo, el nombre
+      // es el asunto del grupo, venga de quien venga el mensaje.
+      nombreWhatsapp: esGrupo || !msg.fromMe ? msg.nombrePerfil ?? null : null,
       fotoPerfilUrl: msg.fotoPerfilUrl ?? null,
       telefonoReal: msg.jidReal ?? null,
       etapaId: primeraEtapa.id,
       contactoId: contacto?.id ?? null,
       contactoVinculoEstado: contacto ? "vinculado_auto" : "sin_vincular",
+      esGrupo,
     });
   } else {
     // El primer intento pudo fallar (privacidad, red, o el directorio de contactos de WhatsApp
-    // todavía no había sincronizado) — si un mensaje posterior sí trae el dato, no hay razón para
-    // quedarse sin él para siempre. El nombre solo se completa desde un mensaje que NO es `fromMe`
-    // (ver la nota en baileys.provider.ts sobre por qué el pushName de un mensaje propio no sirve).
+    // todavía no había sincronizado): si un mensaje posterior sí trae el dato, se completa.
     if (msg.fotoPerfilUrl && msg.fotoPerfilUrl !== conversacion.foto_perfil_url) {
       if (await repo.setFotoPerfil(conversacion.id, msg.fotoPerfilUrl)) {
         await notifyEvento({ tipo: "foto_perfil", conexion_id: conexionId, conversacion_id: conversacion.id, foto_perfil_url: msg.fotoPerfilUrl });
       }
     }
-    if (!conversacion.telefono_real && msg.jidReal) {
+    if (!esGrupo && !conversacion.telefono_real && msg.jidReal) {
       await repo.actualizarTelefonoReal(conversacion.id, msg.jidReal);
       await intentarVincularPorTelefono(conversacion.id, conversacion.contacto_id, msg.jidReal);
     }
-    if (!conversacion.nombre_whatsapp && !msg.fromMe && msg.nombrePerfil) await repo.actualizarNombreSiFalta(conversacion.id, msg.nombrePerfil);
+    if (esGrupo && msg.nombrePerfil && msg.nombrePerfil !== conversacion.nombre_whatsapp) {
+      await repo.upsertConversacionDesdeChat(conexionId, { jid: msg.jid, nombre: msg.nombrePerfil, esGrupo: true }, conversacion.etapa_id!);
+    } else if (!esGrupo && !conversacion.nombre_whatsapp && !msg.fromMe && msg.nombrePerfil) {
+      await repo.actualizarNombreSiFalta(conversacion.id, msg.nombrePerfil);
+    }
   }
 
-  // fromMe = lo envió el número conectado desde el teléfono físico, fuera de GOZZ (p.ej. el
-  // vendedor contestó directo desde su celular). Se guarda como 'saliente' para que el hilo
-  // compartido quede completo; la idempotencia por wa_message_id evita duplicar lo que GOZZ
-  // mismo ya envió (ese mensaje ya existe con ese wa_message_id tras la confirmación de envío).
+  // fromMe = lo envió el número conectado desde el teléfono, fuera de GOZZ. Se guarda como
+  // 'saliente' para que el hilo quede completo; la idempotencia por wa_message_id evita duplicar
+  // lo que GOZZ mismo envió.
   const direccion = msg.fromMe ? "saliente" : "entrante";
   const insertado = await repo.insertMensaje({
     conversacionId: conversacion.id,
@@ -146,13 +165,72 @@ export async function registrarMensajeEntrante(conexionId: string, msg: WhatsApp
     archivoUrl: msg.archivoUrl ?? null,
     archivoNombre: msg.archivoNombre ?? null,
     archivoTipo: msg.archivoTipo ?? null,
-    estadoEntrega: "entregado",
+    archivoTamanio: msg.archivoTamanio ?? null,
+    estadoEntrega: msg.fromMe ? "enviado" : "entregado",
+    createdAt: msg.timestamp,
+    autorJid: msg.autorJid ?? null,
+    autorNombre: msg.autorNombre ?? null,
+    respuestaA: msg.respuestaA ?? null,
+    respuestaPreview: msg.respuestaPreview ?? null,
+    mediaMeta: msg.mediaMeta ?? null,
+    historico: !!msg.historico,
   });
-  if (!insertado) return; // ya lo teníamos (reintento del proveedor o eco de un envío propio) — idempotencia
+  if (!insertado) return; // ya lo teníamos (reintento del proveedor o eco de un envío propio)
 
-  const preview = msg.contenido || (msg.tipo === "imagen" ? "📷 Imagen" : msg.tipo === "video" ? "🎥 Video" : msg.tipo === "audio" ? "🎤 Audio" : "📎 Archivo");
-  await repo.tocarUltimoMensaje(conversacion.id, preview, direccion);
-  await notifyEvento({ tipo: "mensaje", conexion_id: conexionId, conversacion_id: conversacion.id, mensaje: insertado });
+  const base = previewDe(msg.tipo, msg.contenido, { archivoNombre: msg.archivoNombre });
+  const preview = esGrupo && !msg.fromMe && msg.autorNombre ? `${msg.autorNombre}: ${base}` : base;
+  await repo.tocarUltimoMensaje(conversacion.id, preview, direccion, { at: msg.timestamp, contarNoLeido: !msg.historico && direccion === "entrante" });
+  if (msg.historico) { avisarHistorial(conexionId); return; }
+  await notifyEvento({ tipo: "mensaje", conexion_id: conexionId, conversacion_id: conversacion.id, mensaje: insertado, es_grupo: esGrupo });
+}
+
+/** Reacción, borrado o edición sobre un mensaje que ya tenemos. Si el mensaje original no está
+ * (anterior a la conexión y no importado), no hay nada que modificar. */
+export async function registrarModificacion(conexionId: string, mod: WhatsAppMensajeModificado): Promise<void> {
+  const m = await repo.getMensajeDeChat(conexionId, mod.jid, mod.objetivoId);
+  if (!m) return;
+  const actualizado =
+    mod.tipo === "reaccion" ? await repo.aplicarReaccion(m.id, mod.autor, mod.emoji)
+    : mod.tipo === "borrado" ? await repo.marcarEliminado(m.id)
+    : await repo.editarContenido(m.id, mod.contenido);
+  if (!actualizado) return;
+  await notifyEvento({ tipo: "mensaje_actualizado", conexion_id: conexionId, conversacion_id: m.conversacion_id, mensaje: actualizado });
+}
+
+/** Chats que informa WhatsApp: todos los del teléfono al vincular (historial), o el cambio de
+ * nombre de un grupo. Crea las conversaciones que falten con su nombre, no leídos y archivado. */
+export async function registrarChats(conexionId: string, chats: WhatsAppChatInfo[], opts: { historial: boolean }): Promise<void> {
+  if (!chats.length) return;
+  const primeraEtapa = await repo.getPrimeraEtapa();
+  if (!primeraEtapa) throw new Error("No hay etapas de pipeline de WhatsApp configuradas");
+  for (const chat of chats) {
+    const conv = await repo.upsertConversacionDesdeChat(conexionId, chat, primeraEtapa.id);
+    if (!chat.esGrupo && !conv.contacto_id) await intentarVincularPorTelefono(conv.id, null, chat.jidReal || chat.jid);
+  }
+  if (opts.historial) avisarHistorial(conexionId);
+  else await notifyEvento({ tipo: "historial", conexion_id: conexionId });
+}
+
+// ---- Media que se descarga al abrirla (historial, o descarga en vivo que falló) ----
+
+export async function solicitarDescargaMedia(mensajeId: string): Promise<void> {
+  await query("SELECT pg_notify('whatsapp_descargar', $1)", [JSON.stringify({ mensaje_id: mensajeId })]);
+}
+
+export async function registrarMediaDescargada(mensajeId: string, d: WhatsAppMediaDescargada): Promise<void> {
+  const m = await repo.setMediaDescargada(mensajeId, d);
+  if (!m) return;
+  const conv = await repo.getConversacion(m.conversacion_id);
+  if (!conv) return;
+  await notifyEvento({ tipo: "mensaje_actualizado", conexion_id: conv.conexion_id, conversacion_id: m.conversacion_id, mensaje: m });
+}
+
+export async function registrarFalloDescarga(mensajeId: string, error: string): Promise<void> {
+  const m = await repo.getMensaje(mensajeId);
+  if (!m) return;
+  const conv = await repo.getConversacion(m.conversacion_id);
+  if (!conv) return;
+  await notifyEvento({ tipo: "media_error", conexion_id: conv.conexion_id, conversacion_id: m.conversacion_id, mensaje_id: mensajeId, error });
 }
 
 /** Antes de enviar: deja guardado el id de WhatsApp del mensaje (ver `generarIdMensaje`). */
@@ -358,7 +436,7 @@ export async function enviarMensaje(
   });
   if (!mensaje) throw new Error("No se pudo registrar el mensaje");
 
-  const preview = d.contenido || (d.tipo === "imagen" ? "📷 Imagen" : d.tipo === "video" ? "🎥 Video" : d.tipo === "audio" ? "🎤 Audio" : "📎 Archivo");
+  const preview = previewDe(d.tipo, d.contenido ?? null, { archivoNombre: d.archivoNombre });
   await repo.tocarUltimoMensaje(conversacionId, preview, "saliente");
   await notifyEnviar(mensaje.id);
   return mensaje;

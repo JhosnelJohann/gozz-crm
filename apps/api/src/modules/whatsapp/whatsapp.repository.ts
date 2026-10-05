@@ -289,33 +289,63 @@ export interface NuevaConversacion {
   etapaId: string;
   contactoId?: string | null;
   contactoVinculoEstado?: string;
+  esGrupo?: boolean;
 }
 
 export async function crearConversacion(d: NuevaConversacion): Promise<WhatsAppConversacion> {
   const rows = await query<WhatsAppConversacion>(
     `INSERT INTO gozz.whatsapp_conversaciones
-       (conexion_id, wa_jid, nombre_whatsapp, foto_perfil_url, telefono_real, etapa_id, contacto_id, contacto_vinculo_estado)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       (conexion_id, wa_jid, nombre_whatsapp, foto_perfil_url, telefono_real, etapa_id, contacto_id, contacto_vinculo_estado, es_grupo)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (conexion_id, wa_jid) DO UPDATE SET nombre_whatsapp = COALESCE(EXCLUDED.nombre_whatsapp, gozz.whatsapp_conversaciones.nombre_whatsapp)
      RETURNING *`,
-    [d.conexionId, d.jid, d.nombreWhatsapp ?? null, d.fotoPerfilUrl ?? null, d.telefonoReal ?? null, d.etapaId, d.contactoId ?? null, d.contactoVinculoEstado ?? "sin_vincular"]
+    [d.conexionId, d.jid, d.nombreWhatsapp ?? null, d.fotoPerfilUrl ?? null, d.telefonoReal ?? null, d.etapaId, d.contactoId ?? null, d.contactoVinculoEstado ?? "sin_vincular", d.esGrupo ?? d.jid.endsWith("@g.us")]
   );
   return rows[0];
 }
 
+/** Vista previa y hora del último mensaje. Solo avanza (un mensaje más viejo del historial no pisa
+ * uno más nuevo) y solo suma "no leído" si se pide (el historial trae su propio contador). */
 export async function tocarUltimoMensaje(
   conversacionId: string,
   preview: string,
-  direccion: "entrante" | "saliente"
+  direccion: "entrante" | "saliente",
+  opts: { at?: Date | null; contarNoLeido?: boolean } = {}
 ): Promise<void> {
   await query(
     `UPDATE gozz.whatsapp_conversaciones
-       SET ultimo_mensaje_preview = $2, ultimo_mensaje_at = NOW(), ultimo_mensaje_direccion = $3,
-           no_leidos_count = CASE WHEN $3 = 'entrante' THEN no_leidos_count + 1 ELSE no_leidos_count END,
+       SET ultimo_mensaje_preview = CASE WHEN ultimo_mensaje_at IS NULL OR ultimo_mensaje_at <= COALESCE($4, NOW()) THEN $2 ELSE ultimo_mensaje_preview END,
+           ultimo_mensaje_direccion = CASE WHEN ultimo_mensaje_at IS NULL OR ultimo_mensaje_at <= COALESCE($4, NOW()) THEN $3 ELSE ultimo_mensaje_direccion END,
+           ultimo_mensaje_at = GREATEST(COALESCE(ultimo_mensaje_at, COALESCE($4, NOW())), COALESCE($4, NOW())),
+           no_leidos_count = CASE WHEN $3 = 'entrante' AND $5 THEN no_leidos_count + 1 ELSE no_leidos_count END,
            updated_at = NOW()
      WHERE id = $1`,
-    [conversacionId, preview.slice(0, 200), direccion]
+    [conversacionId, preview.slice(0, 200), direccion, opts.at ?? null, opts.contarNoLeido ?? direccion === "entrante"]
   );
+}
+
+/** Crea o actualiza una conversación desde un chat que informa WhatsApp (historial o grupo). En
+ * grupos el nombre (asunto) siempre se actualiza; en chats individuales solo se completa si falta,
+ * para no pisar un nombre que el equipo ya conoce. */
+export async function upsertConversacionDesdeChat(
+  conexionId: string,
+  d: { jid: string; nombre?: string | null; esGrupo: boolean; noLeidos?: number; archivado?: boolean; jidReal?: string | null },
+  etapaId: string
+): Promise<WhatsAppConversacion> {
+  const rows = await query<WhatsAppConversacion>(
+    `INSERT INTO gozz.whatsapp_conversaciones AS c (conexion_id, wa_jid, nombre_whatsapp, es_grupo, no_leidos_count, archivado, telefono_real, etapa_id)
+     VALUES ($1, $2, $3, $4, COALESCE($5, 0), COALESCE($6, false), $7, $8)
+     ON CONFLICT (conexion_id, wa_jid) DO UPDATE SET
+       nombre_whatsapp = CASE WHEN EXCLUDED.es_grupo THEN COALESCE(EXCLUDED.nombre_whatsapp, c.nombre_whatsapp) ELSE COALESCE(c.nombre_whatsapp, EXCLUDED.nombre_whatsapp) END,
+       es_grupo = EXCLUDED.es_grupo,
+       no_leidos_count = COALESCE($5, c.no_leidos_count),
+       archivado = COALESCE($6, c.archivado),
+       telefono_real = COALESCE(c.telefono_real, EXCLUDED.telefono_real),
+       updated_at = NOW()
+     RETURNING *`,
+    [conexionId, d.jid, d.nombre ?? null, d.esGrupo, d.noLeidos ?? null, d.archivado ?? null, d.jidReal ?? null, etapaId]
+  );
+  return rows[0];
 }
 
 /** Devuelve los `wa_message_id` de los entrantes que se acaban de marcar como vistos — para
@@ -464,6 +494,17 @@ export async function buscarContactoPorTelefono(jidODigitos: string): Promise<{ 
 // Mensajes
 // ---------------------------------------------------------------------------
 
+/** Columnas de un mensaje que salen hacia la API. `media_meta` (el mensaje crudo de WhatsApp para
+ * bajar la media más tarde) es interno y pesado: nunca se manda al navegador, solo si falta bajarla. */
+const MSG_COLS = `id, conversacion_id, wa_message_id, direccion, tipo, contenido, archivo_url, archivo_nombre, archivo_tipo,
+  archivo_tamanio, enviado_por, estado_entrega, error_envio, created_at, visto_at, visto_por, autor_jid, autor_nombre,
+  respuesta_a, respuesta_preview, reacciones, editado_at, eliminado_at, historico,
+  (media_meta IS NOT NULL AND archivo_url IS NULL) AS media_pendiente`;
+
+/** Mensajes viejos que se guardaron como 'sistema' vacío (antes de mensaje-parser.ts): no tienen
+ * nada que mostrar. No se borran (el historial los repara al reimportarse, ver insertMensaje). */
+const NO_VACIO = "NOT (tipo = 'sistema' AND contenido IS NULL AND archivo_url IS NULL)";
+
 export interface NuevoMensaje {
   conversacionId: string;
   waMessageId?: string | null;
@@ -476,22 +517,105 @@ export interface NuevoMensaje {
   archivoTamanio?: number | null;
   enviadoPor?: string | null;
   estadoEntrega?: WhatsAppMensajeEstado;
+  createdAt?: Date | null;
+  autorJid?: string | null;
+  autorNombre?: string | null;
+  respuestaA?: string | null;
+  respuestaPreview?: string | null;
+  mediaMeta?: string | null;
+  historico?: boolean;
 }
 
 export async function insertMensaje(d: NuevoMensaje): Promise<WhatsAppMensaje | null> {
+  // `created_at` = la hora REAL del mensaje en WhatsApp (no la hora en que llegó al CRM): sin esto
+  // el historial importado aparecía todo "ahora" y desordenado.
+  // Si ya existía como 'sistema' vacío (guardado antes de que el CRM supiera leer ese tipo), se
+  // repara con el contenido real en vez de quedarse vacío para siempre.
   const rows = await query<WhatsAppMensaje>(
-    `INSERT INTO gozz.whatsapp_mensajes
-       (conversacion_id, wa_message_id, direccion, tipo, contenido, archivo_url, archivo_nombre, archivo_tipo, archivo_tamanio, enviado_por, estado_entrega)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-     ON CONFLICT (conversacion_id, wa_message_id) WHERE wa_message_id IS NOT NULL DO NOTHING
-     RETURNING *`,
+    `INSERT INTO gozz.whatsapp_mensajes AS m
+       (conversacion_id, wa_message_id, direccion, tipo, contenido, archivo_url, archivo_nombre, archivo_tipo, archivo_tamanio,
+        enviado_por, estado_entrega, created_at, autor_jid, autor_nombre, respuesta_a, respuesta_preview, media_meta, historico)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, NOW()), $13, $14, $15, $16, $17::jsonb, $18)
+     ON CONFLICT (conversacion_id, wa_message_id) WHERE wa_message_id IS NOT NULL DO UPDATE SET
+       tipo = EXCLUDED.tipo, contenido = EXCLUDED.contenido, archivo_url = EXCLUDED.archivo_url,
+       archivo_nombre = EXCLUDED.archivo_nombre, archivo_tipo = EXCLUDED.archivo_tipo, archivo_tamanio = EXCLUDED.archivo_tamanio,
+       autor_jid = EXCLUDED.autor_jid, autor_nombre = EXCLUDED.autor_nombre, respuesta_a = EXCLUDED.respuesta_a,
+       respuesta_preview = EXCLUDED.respuesta_preview, media_meta = EXCLUDED.media_meta
+       WHERE m.tipo = 'sistema' AND m.contenido IS NULL AND m.archivo_url IS NULL
+     RETURNING ${MSG_COLS}`,
     [
       d.conversacionId, d.waMessageId ?? null, d.direccion, d.tipo, d.contenido ?? null,
       d.archivoUrl ?? null, d.archivoNombre ?? null, d.archivoTipo ?? null, d.archivoTamanio ?? null,
-      d.enviadoPor ?? null, d.estadoEntrega ?? "pendiente",
+      d.enviadoPor ?? null, d.estadoEntrega ?? "pendiente", d.createdAt ?? null,
+      d.autorJid ?? null, d.autorNombre ?? null, d.respuestaA ?? null, d.respuestaPreview ?? null, d.mediaMeta ?? null, d.historico ?? false,
     ]
   );
   return rows[0] ?? null; // null = ya existía (idempotencia por wa_message_id)
+}
+
+// ---- Reacciones, borrados, ediciones ----
+
+/** Un mensaje de una conversación concreta por su id de WhatsApp. */
+export async function getMensajeDeChat(conexionId: string, jid: string, waMessageId: string): Promise<WhatsAppMensaje | null> {
+  const rows = await query<{ id: string }>(
+    `SELECT m.id FROM gozz.whatsapp_mensajes m
+       JOIN gozz.whatsapp_conversaciones c ON c.id = m.conversacion_id
+      WHERE c.conexion_id = $1 AND c.wa_jid = $2 AND m.wa_message_id = $3 LIMIT 1`,
+    [conexionId, jid, waMessageId]
+  );
+  return rows[0] ? getMensaje(rows[0].id) : null;
+}
+
+/** `emoji` vacío = quitó su reacción. */
+export async function aplicarReaccion(mensajeId: string, autor: string, emoji: string): Promise<WhatsAppMensaje | null> {
+  const rows = await query<WhatsAppMensaje>(
+    `UPDATE gozz.whatsapp_mensajes
+        SET reacciones = CASE WHEN $3 = '' THEN reacciones - $2 ELSE jsonb_set(reacciones, ARRAY[$2], to_jsonb($3::text)) END
+      WHERE id = $1 RETURNING ${MSG_COLS}`,
+    [mensajeId, autor, emoji]
+  );
+  return rows[0] ?? null;
+}
+
+/** El contenido original se conserva (el equipo de ventas puede necesitarlo); la interfaz lo
+ * muestra como eliminado. */
+export async function marcarEliminado(mensajeId: string): Promise<WhatsAppMensaje | null> {
+  const rows = await query<WhatsAppMensaje>(
+    `UPDATE gozz.whatsapp_mensajes SET eliminado_at = COALESCE(eliminado_at, NOW()) WHERE id = $1 RETURNING ${MSG_COLS}`,
+    [mensajeId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function editarContenido(mensajeId: string, contenido: string): Promise<WhatsAppMensaje | null> {
+  const rows = await query<WhatsAppMensaje>(
+    `UPDATE gozz.whatsapp_mensajes SET contenido = $2, editado_at = NOW() WHERE id = $1 RETURNING ${MSG_COLS}`,
+    [mensajeId, contenido]
+  );
+  return rows[0] ?? null;
+}
+
+// ---- Media diferida ----
+
+export async function getMediaPendiente(mensajeId: string): Promise<{ media_meta: any; conexion_id: string; archivo_url: string | null } | null> {
+  const rows = await query<{ media_meta: any; conexion_id: string; archivo_url: string | null }>(
+    `SELECT m.media_meta, m.archivo_url, c.conexion_id FROM gozz.whatsapp_mensajes m
+       JOIN gozz.whatsapp_conversaciones c ON c.id = m.conversacion_id WHERE m.id = $1`,
+    [mensajeId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function setMediaDescargada(
+  mensajeId: string, d: { archivoUrl: string; archivoNombre: string; archivoTipo: string; archivoTamanio: number }
+): Promise<WhatsAppMensaje | null> {
+  const rows = await query<WhatsAppMensaje>(
+    `UPDATE gozz.whatsapp_mensajes
+        SET archivo_url = $2, archivo_nombre = COALESCE(archivo_nombre, $3), archivo_tipo = $4, archivo_tamanio = $5, media_meta = NULL
+      WHERE id = $1 RETURNING ${MSG_COLS}`,
+    [mensajeId, d.archivoUrl, d.archivoNombre, d.archivoTipo, d.archivoTamanio]
+  );
+  return rows[0] ?? null;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -504,8 +628,8 @@ export async function listMensajes(conversacionId: string, limit = 50, before?: 
   if (before) {
     if (!UUID_RE.test(before)) return [];
     const rows = await query<WhatsAppMensaje>(
-      `SELECT * FROM gozz.whatsapp_mensajes
-        WHERE conversacion_id = $1
+      `SELECT ${MSG_COLS} FROM gozz.whatsapp_mensajes
+        WHERE conversacion_id = $1 AND ${NO_VACIO}
           AND (created_at, id) < (SELECT created_at, id FROM gozz.whatsapp_mensajes WHERE id = $2)
         ORDER BY created_at DESC, id DESC LIMIT $3`,
       [conversacionId, before, limit]
@@ -513,20 +637,20 @@ export async function listMensajes(conversacionId: string, limit = 50, before?: 
     return rows.reverse();
   }
   const rows = await query<WhatsAppMensaje>(
-    "SELECT * FROM gozz.whatsapp_mensajes WHERE conversacion_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
+    `SELECT ${MSG_COLS} FROM gozz.whatsapp_mensajes WHERE conversacion_id = $1 AND ${NO_VACIO} ORDER BY created_at DESC, id DESC LIMIT $2`,
     [conversacionId, limit]
   );
   return rows.reverse();
 }
 
 export async function getMensaje(id: string): Promise<WhatsAppMensaje | null> {
-  const rows = await query<WhatsAppMensaje>("SELECT * FROM gozz.whatsapp_mensajes WHERE id = $1", [id]);
+  const rows = await query<WhatsAppMensaje>(`SELECT ${MSG_COLS} FROM gozz.whatsapp_mensajes WHERE id = $1`, [id]);
   return rows[0] ?? null;
 }
 
 /** Para las confirmaciones de entrega/lectura de Baileys, que solo traen el `wa_message_id`. */
 export async function getMensajePorWaId(waMessageId: string): Promise<WhatsAppMensaje | null> {
-  const rows = await query<WhatsAppMensaje>("SELECT * FROM gozz.whatsapp_mensajes WHERE wa_message_id = $1", [waMessageId]);
+  const rows = await query<WhatsAppMensaje>(`SELECT ${MSG_COLS} FROM gozz.whatsapp_mensajes WHERE wa_message_id = $1`, [waMessageId]);
   return rows[0] ?? null;
 }
 
@@ -549,7 +673,7 @@ export async function confirmarEnvio(mensajeId: string, waMessageId: string): Pr
         SET estado_entrega = CASE WHEN estado_entrega IN ('pendiente', 'fallido') THEN 'enviado' ELSE estado_entrega END,
             wa_message_id = COALESCE(wa_message_id, $2),
             error_envio = NULL
-      WHERE id = $1 RETURNING *`,
+      WHERE id = $1 RETURNING ${MSG_COLS}`,
     [mensajeId, waMessageId]
   );
   return rows[0] ?? null;

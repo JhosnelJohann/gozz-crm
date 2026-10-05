@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { Search, Tag as TagIcon, CaretDown, Check, UserCircle } from "@/lib/bootstrap-icons";
 import { WhatsappLogo } from "@/lib/bootstrap-icons";
 import { WhatsAppAvatar } from "./WhatsAppAvatar";
+import { nombreVisible } from "@/lib/whatsapp-numero";
 import type { WhatsAppPipelineStage, WhatsAppTag } from "./types";
 
 export interface ConversacionItem {
@@ -13,6 +14,9 @@ export interface ConversacionItem {
   wa_jid: string;
   nombre_whatsapp: string | null;
   foto_perfil_url: string | null;
+  telefono_real?: string | null;
+  es_grupo?: boolean;
+  archivado?: boolean;
   contacto_id: string | null;
   etapa_id: string | null;
   asignado_a: string | null;
@@ -226,7 +230,7 @@ export function ConversationList({
                 >
                   {active && <span className="absolute left-0 top-0 bottom-0 w-1 bg-brand-primary rounded-r-full" />}
                   <div className="relative shrink-0">
-                    <WhatsAppAvatar fotoUrl={c.foto_perfil_url} nombre={c.nombre_whatsapp || c.wa_jid} size={44} />
+                    <WhatsAppAvatar fotoUrl={c.foto_perfil_url} nombre={nombreVisible(c)} size={44} />
                     {c.asignado_a && (
                       <div title={`Asignada a ${c.asignado_nombre || "alguien"}`} className="absolute -bottom-1 -right-1 ring-2 ring-bg-canvas dark:ring-[#0B0F16] rounded-full">
                         <WhatsAppAvatar fotoUrl={c.asignado_foto_url} nombre={c.asignado_nombre || "?"} size={18} />
@@ -236,7 +240,7 @@ export function ConversationList({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <div className={cn("text-[13px] truncate flex-1", c.no_leidos_count > 0 ? "font-bold" : "font-medium text-neutral-700 dark:text-neutral-300")}>
-                        {c.nombre_whatsapp || c.wa_jid.split("@")[0]}
+                        {nombreVisible(c)}
                       </div>
                       <div className="text-[10px] text-neutral-400 shrink-0 tabular-nums">{friendlyDate(c.ultimo_mensaje_at)}</div>
                     </div>

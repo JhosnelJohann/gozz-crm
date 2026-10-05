@@ -8,6 +8,7 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
   generateMessageIDV2,
+  BufferJSON,
   proto,
   type WASocket,
   type WAMessage,
@@ -19,13 +20,21 @@ import type { WhatsAppMensajeEstado } from "@gozz/shared-types";
 import { UPLOADS_ROOT, shard, readUploadedFileBytes, putUploadedBytesToR2 } from "../../../lib/storage.js";
 import { usePostgresAuthState, clearAuthState } from "./postgres-auth-state.js";
 import { aOggOpus } from "../audio-transcode.js";
+import { parsearMensaje, type MediaInfo } from "../mensaje-parser.js";
 import { createHash } from "crypto";
 import type {
   WhatsAppProvider,
   WhatsAppOutgoingMessage,
   WhatsAppIncomingMessage,
   WhatsAppConnectionUpdate,
+  WhatsAppMensajeModificado,
+  WhatsAppChatInfo,
+  WhatsAppMediaDescargada,
 } from "./whatsapp-provider.interface.js";
+
+/** Chats que nunca se muestran: estados (historias, Parte 4) y canales. */
+const esJidIgnorado = (jid: string) => jid === "status@broadcast" || jid.endsWith("@broadcast") || jid.endsWith("@newsletter");
+const GRUPO_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const logger = pino({ level: process.env.WHATSAPP_LOG_LEVEL || "silent" });
 
@@ -54,24 +63,6 @@ function guessMime(filename: string): string {
   return EXT_MIME[path.extname(filename).toLowerCase()] || "application/octet-stream";
 }
 
-function extractContent(msg: WAMessage): {
-  tipo: WhatsAppIncomingMessage["tipo"];
-  contenido: string | null;
-  media: { tipo: "image" | "video" | "audio" | "document"; nombre: string | null } | null;
-} {
-  const m = msg.message;
-  if (!m) return { tipo: "sistema", contenido: null, media: null };
-  if (m.conversation) return { tipo: "texto", contenido: m.conversation, media: null };
-  if (m.extendedTextMessage?.text) return { tipo: "texto", contenido: m.extendedTextMessage.text, media: null };
-  if (m.imageMessage) return { tipo: "imagen", contenido: m.imageMessage.caption || null, media: { tipo: "image", nombre: null } };
-  if (m.videoMessage) return { tipo: "video", contenido: m.videoMessage.caption || null, media: { tipo: "video", nombre: null } };
-  if (m.audioMessage) return { tipo: "audio", contenido: null, media: { tipo: "audio", nombre: null } };
-  if (m.documentMessage) {
-    return { tipo: "archivo", contenido: m.documentMessage.caption || null, media: { tipo: "document", nombre: m.documentMessage.fileName || "documento" } };
-  }
-  return { tipo: "sistema", contenido: null, media: null };
-}
-
 /** SERVER_ACK(2) se queda como "ya lo tenemos como enviado" — no hace falta notificar. */
 function estadoDesdeStatus(status: number | null | undefined): WhatsAppMensajeEstado | null {
   if (status === proto.WebMessageInfo.Status.DELIVERY_ACK) return "entregado";
@@ -86,7 +77,11 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
   private connectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private qrCbs: ((conexionId: string, qr: string) => void)[] = [];
   private stateCbs: ((conexionId: string, update: WhatsAppConnectionUpdate) => void)[] = [];
-  private msgCbs: ((conexionId: string, msg: WhatsAppIncomingMessage) => void)[] = [];
+  private msgCbs: ((conexionId: string, msg: WhatsAppIncomingMessage) => void | Promise<void>)[] = [];
+  private modCbs: ((conexionId: string, mod: WhatsAppMensajeModificado) => void)[] = [];
+  private chatCbs: ((conexionId: string, chats: WhatsAppChatInfo[], opts: { historial: boolean }) => void | Promise<void>)[] = [];
+  /** Nombre (asunto) de cada grupo, para no pedirlo a WhatsApp en cada mensaje. */
+  private gruposCache = new Map<string, { nombre: string | null; at: number }>();
   private statusCbs: ((conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void)[] = [];
   private contactoCbs: ((conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }) => void)[] = [];
   /** Evita pedir la foto de perfil por cada mensaje del mismo jid — se resuelve una sola vez por
@@ -135,11 +130,29 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
       version,
       logger,
       auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
-      browser: Browsers.appropriate("Chrome"),
-      syncFullHistory: false,
+      // Navegador "de escritorio" + historial completo: así, al vincular el número, WhatsApp manda
+      // TODOS los chats con su historial (como WhatsApp Web), no solo lo que llegue desde ese
+      // momento. Solo surte efecto en una vinculación nueva (escanear el QR).
+      browser: Browsers.macOS("Desktop"),
+      syncFullHistory: true,
       markOnlineOnConnect: false,
     });
     this.sockets.set(conexionId, sock);
+
+    // Número real detrás de un `@lid`. Baileys 6.x descarta el atributo `sender_pn` que WhatsApp
+    // manda en el paquete crudo de cada mensaje (y `participant_pn` en grupos, `peer_recipient_pn`
+    // en lo que mandamos desde el teléfono). Se lee aquí, antes de que Baileys descifre el mensaje,
+    // así el directorio ya lo tiene cuando se procesa: sin esto, 5 de 13 conversaciones de la base
+    // local mostraban "Número no disponible".
+    (sock.ws as any).on?.("CB:message", (node: any) => {
+      const a = node?.attrs || {};
+      const pares: [string | undefined, string | undefined][] = [
+        [a.from, a.sender_pn], [a.participant, a.participant_pn], [a.recipient, a.peer_recipient_pn || a.recipient_pn],
+      ];
+      for (const [lid, pn] of pares) {
+        if (lid?.endsWith("@lid") && pn?.endsWith("@s.whatsapp.net")) this.registrarContacto(conexionId, { lid, id: pn });
+      }
+    });
 
     const watchdog = setTimeout(() => {
       this.connectTimers.delete(conexionId);
@@ -182,11 +195,49 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
       if (type !== "notify" && type !== "append") return;
       for (const msg of messages) {
         try {
-          await this.handleIncoming(conexionId, sock, msg);
+          await this.handleIncoming(conexionId, sock, msg, { historico: false });
         } catch (e: any) {
           console.error(`[baileys ${conexionId}] error procesando mensaje entrante:`, e?.message);
         }
       }
+    });
+
+    // Historial completo al vincular: chats (con nombre, no leídos y archivados) y sus mensajes.
+    // Se procesa en orden y esperando cada paso: pueden ser miles de mensajes y el worker no debe
+    // saturar la base. La media del historial NO se descarga aquí (se baja al abrirla).
+    sock.ev.on("messaging-history.set", async ({ chats, contacts, messages }) => {
+      try {
+        if (contacts?.length) contacts.forEach((c: any) => this.registrarContacto(conexionId, c));
+        const infos: WhatsAppChatInfo[] = (chats || [])
+          .filter((c: any) => c.id && !esJidIgnorado(c.id))
+          .map((c: any) => ({
+            jid: c.id,
+            nombre: c.name || c.subject || this.dirDe(conexionId).get(c.id)?.nombre || null,
+            esGrupo: c.id.endsWith("@g.us"),
+            noLeidos: Math.max(0, Number(c.unreadCount) || 0),
+            archivado: !!c.archived,
+            jidReal: this.dirDe(conexionId).get(c.id)?.jidReal ?? null,
+          }));
+        for (const cb of this.chatCbs) await cb(conexionId, infos, { historial: true });
+        const ordenados = [...(messages || [])].sort((x, y) => Number(x.messageTimestamp || 0) - Number(y.messageTimestamp || 0));
+        for (const msg of ordenados) {
+          try { await this.handleIncoming(conexionId, sock, msg, { historico: true }); } catch (e: any) {
+            console.error(`[baileys ${conexionId}] historial: no se pudo importar un mensaje:`, e?.message);
+          }
+        }
+        console.log(`[baileys ${conexionId}] historial importado: ${infos.length} chats, ${ordenados.length} mensajes`);
+      } catch (e: any) {
+        console.error(`[baileys ${conexionId}] error importando historial:`, e?.message);
+      }
+    });
+
+    // Cambios de nombre de un grupo.
+    sock.ev.on("groups.update", (updates: any[]) => {
+      const infos = updates.filter((g) => g.id && g.subject).map((g) => {
+        this.gruposCache.set(`${conexionId}:${g.id}`, { nombre: g.subject, at: Date.now() });
+        return { jid: g.id, nombre: g.subject, esGrupo: true } as WhatsAppChatInfo;
+      });
+      if (infos.length) this.chatCbs.forEach((cb) => cb(conexionId, infos, { historial: false }));
     });
 
     // Confirmaciones de entrega/lectura de mensajes YA enviados — sin esto el doble-check gris y
@@ -220,7 +271,6 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
     };
     sock.ev.on("contacts.upsert", onContactos);
     sock.ev.on("contacts.update", onContactos);
-    sock.ev.on("messaging-history.set", ({ contacts }) => { if (contacts) onContactos(contacts); });
     sock.ev.on("chats.phoneNumberShare", ({ lid, jid }) => {
       this.registrarContacto(conexionId, { lid, id: jid });
     });
@@ -291,66 +341,118 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
     await sock.readMessages(waMessageIds.map((id) => ({ remoteJid: jid, id, fromMe: false })));
   }
 
-  private async handleIncoming(conexionId: string, sock: WASocket, msg: WAMessage): Promise<void> {
+  private async nombreGrupo(conexionId: string, sock: WASocket, jid: string): Promise<string | null> {
+    const k = `${conexionId}:${jid}`;
+    const c = this.gruposCache.get(k);
+    if (c && Date.now() - c.at < GRUPO_CACHE_TTL_MS) return c.nombre;
+    const meta = await sock.groupMetadata(jid).catch(() => null);
+    const nombre = meta?.subject || null;
+    this.gruposCache.set(k, { nombre, at: Date.now() });
+    return nombre;
+  }
+
+  /** Guarda un adjunto entrante como archivo propio (disco + R2) y devuelve su URL. */
+  private async guardarMedia(conexionId: string, waMessageId: string, media: MediaInfo, buffer: Buffer) {
+    // Adjuntos entrantes no pertenecen todavía a una conversación resuelta en BD (puede ser la
+    // primera vez que escribe este contacto): se archivan por conexión. Async a propósito: este
+    // worker sostiene TODAS las conexiones en un solo proceso.
+    const dirRel = `whatsapp/entrantes/${shard(conexionId)}/${conexionId}`;
+    await fs.promises.mkdir(path.join(UPLOADS_ROOT, dirRel), { recursive: true });
+    const ext = media.tipo === "image" ? ".jpg" : media.tipo === "sticker" ? ".webp" : media.tipo === "video" ? ".mp4" : media.tipo === "audio" ? ".ogg" : path.extname(media.nombre || "") || ".bin";
+    const filename = `${Date.now()}_${waMessageId.replace(/[^a-zA-Z0-9]/g, "")}${ext}`;
+    await fs.promises.writeFile(path.join(UPLOADS_ROOT, dirRel, filename), buffer);
+    const archivoUrl = `/uploads/${dirRel}/${filename}`;
+    // Best-effort: si R2 falla el mensaje no se descarta (queda en disco local hasta el redeploy).
+    putUploadedBytesToR2(archivoUrl, buffer, media.mimetype || undefined).catch((e: any) =>
+      console.error(`[baileys ${conexionId}] no se pudo subir el adjunto a R2 (queda solo en disco local):`, e?.message)
+    );
+    return { archivoUrl, archivoNombre: media.nombre || filename, archivoTipo: media.mimetype?.split(";")[0] || guessMime(filename), archivoTamanio: buffer.length };
+  }
+
+  private async handleIncoming(conexionId: string, sock: WASocket, msg: WAMessage, opts: { historico: boolean }): Promise<void> {
     const jid = msg.key.remoteJid;
-    if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast" || !msg.message) return; // grupos/status fuera de alcance del MVP
+    if (!jid || esJidIgnorado(jid) || !msg.message) return;
     const waMessageId = msg.key.id;
     if (!waMessageId) return;
+    const esGrupo = jid.endsWith("@g.us");
+    const fromMe = !!msg.key.fromMe;
 
-    const { tipo, contenido, media } = extractContent(msg);
-    let archivoUrl: string | null = null;
-    let archivoNombre: string | null = null;
-    let archivoTipo: string | null = null;
+    const p = parsearMensaje(msg.message);
+    if (p.kind === "ignorar") return;
+    if (p.kind !== "mensaje") {
+      // Reacción, borrado o edición: modifican un mensaje que ya existe, no son uno nuevo.
+      const autor = fromMe ? "yo" : (msg.key.participant || jid);
+      const mod: WhatsAppMensajeModificado =
+        p.kind === "reaccion" ? { jid, tipo: "reaccion", objetivoId: p.objetivoId, emoji: p.emoji, autor }
+        : p.kind === "borrado" ? { jid, tipo: "borrado", objetivoId: p.objetivoId, autor }
+        : { jid, tipo: "edicion", objetivoId: p.objetivoId, contenido: p.contenido, autor };
+      this.modCbs.forEach((cb) => cb(conexionId, mod));
+      return;
+    }
 
-    if (media) {
-      try {
-        const buffer = await downloadMediaMessage(msg, "buffer", {});
-        // Adjuntos entrantes no pertenecen todavía a una conversación resuelta en BD (puede ser
-        // la primera vez que escribe este contacto) — se archivan por conexión, no por
-        // conversación. La reorganización por conversación es propia de los ADJUNTOS SALIENTES
-        // que el composer sube (ver "whatsapp_mensaje" en lib/storage.ts + whatsapp.routes.ts).
-        const dirRel = `whatsapp/entrantes/${shard(conexionId)}/${conexionId}`;
-        const dirAbs = path.join(UPLOADS_ROOT, dirRel);
-        // Async a propósito: este worker sostiene TODAS las conexiones activas en un solo proceso
-        // — una escritura síncrona aquí congelaría el event loop (y con él, cualquier otra
-        // conexión de WhatsApp) mientras se guarda un adjunto grande.
-        await fs.promises.mkdir(dirAbs, { recursive: true });
-        const ext = media.tipo === "image" ? ".jpg" : media.tipo === "video" ? ".mp4" : media.tipo === "audio" ? ".ogg" : path.extname(media.nombre || "") || ".bin";
-        const filename = `${Date.now()}_${waMessageId.replace(/[^a-zA-Z0-9]/g, "")}${ext}`;
-        await fs.promises.writeFile(path.join(dirAbs, filename), buffer);
-        archivoUrl = `/uploads/${dirRel}/${filename}`;
-        archivoNombre = media.nombre || filename;
-        archivoTipo = guessMime(filename);
-        // Best-effort: si R2 falla acá NO se descarta el mensaje entrante (a diferencia de las
-        // subidas por HTTP en lib/storage.ts, que fallan ruidoso) — queda solo en disco local de
-        // este servicio hasta el próximo redeploy, mejor que perder el mensaje completo.
-        putUploadedBytesToR2(archivoUrl, buffer).catch((e: any) =>
-          console.error(`[baileys ${conexionId}] no se pudo subir el adjunto a R2 (queda solo en disco local):`, e?.message)
-        );
-      } catch (e: any) {
-        console.error(`[baileys ${conexionId}] no se pudo descargar el adjunto de ${waMessageId}:`, e?.message);
+    let archivo: { archivoUrl: string | null; archivoNombre: string | null; archivoTipo: string | null; archivoTamanio: number | null } = {
+      archivoUrl: null, archivoNombre: p.media?.nombre ?? null, archivoTipo: p.media?.mimetype ?? null, archivoTamanio: p.media?.tamanio ?? null,
+    };
+    let mediaMeta: string | null = null;
+    if (p.media) {
+      // Lo necesario para bajar la media más tarde (ver `descargarMedia`): el historial no se
+      // descarga de entrada, y una descarga en vivo que falla se puede reintentar al abrirla.
+      mediaMeta = JSON.stringify({ key: msg.key, message: msg.message, messageTimestamp: msg.messageTimestamp }, BufferJSON.replacer);
+      if (!opts.historico) {
+        try {
+          const buffer = await downloadMediaMessage(msg, "buffer", {}, { logger, reuploadRequest: sock.updateMediaMessage }) as Buffer;
+          archivo = await this.guardarMedia(conexionId, waMessageId, p.media, buffer);
+        } catch (e: any) {
+          console.error(`[baileys ${conexionId}] no se pudo descargar el adjunto de ${waMessageId} (se podrá reintentar):`, e?.message);
+        }
       }
     }
 
-    const fotoPerfilUrl = await this.fetchFotoPerfil(conexionId, sock, jid);
-    const fromMe = !!msg.key.fromMe;
-    const contacto = this.dirDe(conexionId).get(jid);
+    // Las fotos del historial se resuelven después, al listar (cientos de chats a la vez
+    // dispararían el límite de WhatsApp).
+    const fotoPerfilUrl = opts.historico ? undefined : await this.fetchFotoPerfil(conexionId, sock, jid);
+    const dir = this.dirDe(conexionId);
+    const contacto = dir.get(jid);
+    const autorJid = esGrupo && !fromMe ? msg.key.participant || null : null;
+    const autorInfo = autorJid ? dir.get(autorJid) : undefined;
     // OJO: `msg.pushName` en un mensaje `fromMe` es el nombre de la CUENTA CONECTADA (el vendedor),
-    // no el del contacto — usarlo aquí sin este chequeo fue el bug que nombraba conversaciones con
-    // el propio nombre del dueño de la conexión cuando el primer mensaje del hilo lo mandó él desde
-    // el teléfono, antes de que el contacto respondiera. El directorio de contactos (nombre
-    // guardado en el teléfono) es siempre más confiable que cualquiera de los dos pushName cuando
-    // está disponible.
-    const nombrePerfil = contacto?.nombre || (!fromMe ? msg.pushName || null : null) || null;
+    // no el del contacto: usarlo nombraba conversaciones con el nombre del propio dueño. En un grupo,
+    // el pushName es el de quien escribió, no el del grupo.
+    const nombrePerfil = esGrupo
+      ? await this.nombreGrupo(conexionId, sock, jid)
+      : contacto?.nombre || (!fromMe ? msg.pushName || null : null) || (msg as any).verifiedBizName || null;
 
-    this.msgCbs.forEach((cb) => cb(conexionId, {
-      jid, waMessageId, tipo, contenido, archivoUrl, archivoNombre, archivoTipo,
+    const payload: WhatsAppIncomingMessage = {
+      jid, waMessageId, tipo: p.tipo, contenido: p.contenido,
+      ...archivo,
       timestamp: new Date((Number(msg.messageTimestamp) || Date.now() / 1000) * 1000),
       nombrePerfil,
       fromMe,
       fotoPerfilUrl,
-      jidReal: contacto?.jidReal ?? null,
-    }));
+      jidReal: esGrupo ? null : contacto?.jidReal ?? null,
+      esGrupo,
+      autorJid,
+      autorNombre: autorJid ? autorInfo?.nombre || msg.pushName || null : null,
+      autorJidReal: autorJid ? autorInfo?.jidReal ?? null : null,
+      respuestaA: p.cita?.id ?? null,
+      respuestaPreview: p.cita?.preview ?? null,
+      mediaMeta,
+      historico: opts.historico,
+    };
+    for (const cb of this.msgCbs) await cb(conexionId, payload);
+  }
+
+  /** Baja la media de un mensaje guardado sin archivo (historial, o descarga fallida). Si el
+   * archivo ya caducó en los servidores de WhatsApp, pide al teléfono que lo vuelva a subir. */
+  async descargarMedia(conexionId: string, mediaMeta: string): Promise<WhatsAppMediaDescargada> {
+    const sock = this.sockets.get(conexionId);
+    if (!sock) throw new Error("La conexión de WhatsApp no está activa");
+    const msg = JSON.parse(mediaMeta, BufferJSON.reviver) as WAMessage;
+    const p = parsearMensaje(msg.message);
+    if (p.kind !== "mensaje" || !p.media) throw new Error("Ese mensaje no tiene media");
+    const buffer = await downloadMediaMessage(msg, "buffer", {}, { logger, reuploadRequest: sock.updateMediaMessage }) as Buffer;
+    const r = await this.guardarMedia(conexionId, msg.key.id || "media", p.media, buffer);
+    return { archivoUrl: r.archivoUrl, archivoNombre: r.archivoNombre, archivoTipo: r.archivoTipo, archivoTamanio: r.archivoTamanio };
   }
 
   async disconnect(conexionId: string): Promise<void> {
@@ -404,7 +506,9 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
 
   onQr(cb: (conexionId: string, qr: string) => void): void { this.qrCbs.push(cb); }
   onConnectionUpdate(cb: (conexionId: string, update: WhatsAppConnectionUpdate) => void): void { this.stateCbs.push(cb); }
-  onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void): void { this.msgCbs.push(cb); }
+  onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void | Promise<void>): void { this.msgCbs.push(cb); }
+  onMensajeModificado(cb: (conexionId: string, mod: WhatsAppMensajeModificado) => void): void { this.modCbs.push(cb); }
+  onChats(cb: (conexionId: string, chats: WhatsAppChatInfo[], opts: { historial: boolean }) => void | Promise<void>): void { this.chatCbs.push(cb); }
   onMessageStatusUpdate(cb: (conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void): void { this.statusCbs.push(cb); }
   onContactoResuelto(cb: (conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }) => void): void { this.contactoCbs.push(cb); }
 }

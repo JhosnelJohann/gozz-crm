@@ -34,6 +34,42 @@ export interface WhatsAppIncomingMessage {
    * directorio de contactos de WhatsApp ya lo reveló — null/undefined si `jid` ya es un número
    * real o si WhatsApp todavía no lo comparte. */
   jidReal?: string | null;
+  archivoTamanio?: number | null;
+  esGrupo?: boolean;
+  /** Grupos: quién escribió (jid del participante), su nombre y su número real si se conoce. */
+  autorJid?: string | null;
+  autorNombre?: string | null;
+  autorJidReal?: string | null;
+  /** Respuesta citando otro mensaje: id de WhatsApp del citado y un extracto. */
+  respuestaA?: string | null;
+  respuestaPreview?: string | null;
+  /** Mensaje serializado para bajar la media más tarde (ver `descargarMedia`). */
+  mediaMeta?: string | null;
+  /** Importado del historial al vincular: no cuenta como no leído ni notifica. */
+  historico?: boolean;
+}
+
+/** Reacción, borrado o edición de un mensaje que ya existe. */
+export type WhatsAppMensajeModificado =
+  | { jid: string; tipo: "reaccion"; objetivoId: string; emoji: string; autor: string }
+  | { jid: string; tipo: "borrado"; objetivoId: string; autor: string }
+  | { jid: string; tipo: "edicion"; objetivoId: string; contenido: string; autor: string };
+
+/** Un chat tal como lo informa WhatsApp (historial al vincular, o cambio de nombre de un grupo). */
+export interface WhatsAppChatInfo {
+  jid: string;
+  nombre?: string | null;
+  esGrupo: boolean;
+  noLeidos?: number;
+  archivado?: boolean;
+  jidReal?: string | null;
+}
+
+export interface WhatsAppMediaDescargada {
+  archivoUrl: string;
+  archivoNombre: string;
+  archivoTipo: string;
+  archivoTamanio: number;
 }
 
 export interface WhatsAppConnectionUpdate {
@@ -53,7 +89,11 @@ export interface WhatsAppProvider {
   generarIdMensaje(conexionId: string): string;
   onQr(cb: (conexionId: string, qr: string) => void): void;
   onConnectionUpdate(cb: (conexionId: string, update: WhatsAppConnectionUpdate) => void): void;
-  onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void): void;
+  onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void | Promise<void>): void;
+  onMensajeModificado(cb: (conexionId: string, mod: WhatsAppMensajeModificado) => void): void;
+  onChats(cb: (conexionId: string, chats: WhatsAppChatInfo[], opts: { historial: boolean }) => void | Promise<void>): void;
+  /** Baja la media de un mensaje que se guardó sin archivo (historial o descarga fallida). */
+  descargarMedia(conexionId: string, mediaMeta: string): Promise<WhatsAppMediaDescargada>;
   /** Confirmaciones de entrega/lectura de WhatsApp para un mensaje YA enviado, identificado por su
    * `waMessageId` — la única forma de que el doble-check gris y el azul de "leído" avancen. */
   onMessageStatusUpdate(cb: (conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void): void;

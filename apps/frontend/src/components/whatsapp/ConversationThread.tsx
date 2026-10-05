@@ -2,95 +2,33 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, CaretDown, Tag as TagIcon, Check, Plus, Eye, AlertCircle } from "@/lib/bootstrap-icons";
-import { MessageStatus, type Status } from "@/components/chat/MessageStatus";
-import { FileMessage } from "@/components/chat/FileMessage";
-import { AudioMessage } from "@/components/chat/AudioMessage";
+import { ArrowLeft, CaretDown, Tag as TagIcon, Check, Plus, Users2 } from "@/lib/bootstrap-icons";
+import { MessageBubble } from "./MessageBubble";
 import { ConversationComposer } from "./ConversationComposer";
 import { WhatsAppAvatar } from "./WhatsAppAvatar";
 import { AsignadoPicker, type UsuarioAsignable } from "./AsignadoPicker";
-import { formatearNumeroWhatsApp } from "@/lib/whatsapp-numero";
+import { formatearNumeroWhatsApp, nombreVisible } from "@/lib/whatsapp-numero";
 import type { WhatsAppConversacionDetalle, WhatsAppMensaje, WhatsAppPipelineStage, WhatsAppTag } from "./types";
 
 /** Colores predefinidos para crear un tag sin salir del chat — los mismos tonos que ya usa el
  * pipeline en otras partes del CRM, para que un tag nuevo no desentone. */
 const COLORES_TAG = ["#5750E8", "#43A847", "#E53935", "#2196C9", "#FFB51C", "#33359D", "#8338EC"];
 
-/** Igual que WhatsApp: reloj = saliendo, ✓ gris = lo recibió el servidor de WhatsApp, ✓✓ gris =
- * llegó al teléfono del contacto, ✓✓ azul = lo leyó. "enviado" es UN solo check — antes se
- * mostraba como doble y no había forma de distinguir "salió" de "le llegó". */
-function estadoToStatus(e: WhatsAppMensaje["estado_entrega"]): Status {
-  if (e === "leido") return "read";
-  if (e === "entregado") return "delivered";
-  if (e === "enviado") return "sent";
-  if (e === "pendiente") return "pending";
-  if (e === "fallido") return "failed";
-  return "sent";
-}
-
-function fmtHora(iso: string) {
-  return new Date(iso).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
-}
-
 function numeroConBandera(jid: string): string {
   const { texto, bandera } = formatearNumeroWhatsApp(jid);
   return bandera ? `${bandera} ${texto}` : texto;
 }
 
-function Bubble({ m, onRetry, animar }: { m: WhatsAppMensaje; onRetry?: (m: WhatsAppMensaje) => void; animar?: boolean }) {
-  const isMe = m.direccion === "saliente";
-  const fallido = m.estado_entrega === "fallido";
-  return (
-    <div className={cn("flex", isMe ? "justify-end" : "justify-start", animar && "wa-bubble-in")}>
-      <div
-        className={cn(
-          "max-w-[78%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm",
-          isMe
-            ? fallido
-              ? "bg-red-50 dark:bg-red-500/10 border border-red-300 dark:border-red-500/30 rounded-br-sm"
-              : "gradient-orange text-white rounded-br-sm shadow-md"
-            : "glass-light rounded-bl-sm"
-        )}
-      >
-        {m.tipo === "texto" && <div className="text-sm whitespace-pre-wrap break-words">{m.contenido}</div>}
-        {m.tipo === "imagen" && m.archivo_url && (
-          <img src={m.archivo_url} alt="" loading="lazy" decoding="async" className="rounded-lg max-w-[260px] max-h-[320px] object-cover wa-img-in" />
-        )}
-        {m.tipo === "video" && m.archivo_url && (
-          <video src={m.archivo_url} controls className="rounded-lg max-w-[260px] max-h-[320px]" />
-        )}
-        {m.tipo === "audio" && m.archivo_url && (
-          <AudioMessage url={m.archivo_url} filename={m.archivo_nombre} mime={m.archivo_tipo} isMe={isMe} />
-        )}
-        {m.tipo === "archivo" && m.archivo_url && (
-          <FileMessage url={m.archivo_url} filename={m.archivo_nombre} mime={m.archivo_tipo} size={m.archivo_tamanio} isMe={isMe} onVer={() => window.open(m.archivo_url!, "_blank")} />
-        )}
-        <div className={cn("flex items-center gap-1 justify-end mt-1 text-[10px]", isMe ? (fallido ? "text-red-600 dark:text-red-400" : "text-white/70") : "text-neutral-400")}>
-          {!fallido && fmtHora(m.created_at)}
-          {isMe && !fallido && <MessageStatus status={estadoToStatus(m.estado_entrega)} />}
-          {isMe && fallido && (
-            <button
-              type="button"
-              onClick={() => onRetry?.(m)}
-              title="No se pudo enviar — reintentar"
-              className="inline-flex items-center gap-1 font-ui font-bold uppercase tracking-wider hover:underline"
-            >
-              <AlertCircle className="h-3 w-3" />
-              No enviado · Reintentar
-            </button>
-          )}
-          {/* "Visto por el equipo" — deliberadamente un ícono y color distintos del check de
-              envío de arriba: uno es la confirmación de WhatsApp para lo que enviamos, este es
-              que alguien del equipo ya vio, dentro del CRM, lo que el lead/cliente nos escribió. */}
-          {!isMe && m.visto_at && (
-            <span title="Visto por el equipo" className="inline-flex">
-              <Eye className="h-3 w-3 text-neutral-400" />
-            </span>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+/** Separador de día como en WhatsApp: "Hoy", "Ayer", el día de la semana esta semana, o la fecha. */
+function etiquetaDia(iso: string): string {
+  const d = new Date(iso);
+  const hoy = new Date();
+  const inicio = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dias = Math.round((inicio(hoy) - inicio(d)) / 86_400_000);
+  if (dias === 0) return "Hoy";
+  if (dias === 1) return "Ayer";
+  if (dias < 7) return d.toLocaleDateString("es", { weekday: "long" });
+  return d.toLocaleDateString("es", { day: "numeric", month: "long", year: d.getFullYear() === hoy.getFullYear() ? undefined : "numeric" });
 }
 
 function StagePicker({ etapas, valor, onChange }: { etapas: WhatsAppPipelineStage[]; valor: string | null; onChange: (id: string) => void }) {
@@ -247,12 +185,22 @@ interface Props {
   onToggleTag: (tag: WhatsAppTag) => void;
   onCrearTag: (nombre: string, color: string) => Promise<void>;
   onAbrirPerfil: () => void;
+  onDescargar?: (m: WhatsAppMensaje) => Promise<void>;
 }
 
 export function ConversationThread({
   conversacion, mensajes, etapas, tags, usuarios, conectado, hasMore = false, loadingOlder = false, onLoadOlder,
-  onBack, onSend, onRetry, onCambiarEtapa, onAsignar, onToggleTag, onCrearTag, onAbrirPerfil,
+  onBack, onSend, onRetry, onCambiarEtapa, onAsignar, onToggleTag, onCrearTag, onAbrirPerfil, onDescargar,
 }: Props) {
+  const esGrupo = !!conversacion.es_grupo || conversacion.wa_jid.endsWith("@g.us");
+
+  /** Tocar una cita lleva al mensaje original (si está cargado) y lo resalta un momento. */
+  const irACita = (waId: string) => {
+    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-wa-id="${CSS.escape(waId)}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.animate([{ background: "rgba(87,80,232,.22)" }, { background: "transparent" }], { duration: 1400, easing: "ease-out" });
+  };
   const scrollRef = useRef<HTMLDivElement>(null);
   // Ancla de scroll para el historial anterior (evita el "salto" al prepender mensajes viejos).
   const anchorHeightRef = useRef(0);
@@ -318,10 +266,12 @@ export function ConversationThread({
           </button>
         )}
         <button onClick={onAbrirPerfil} className="flex-1 min-w-0 flex items-center gap-2.5 text-left rounded-lg -mx-1.5 px-1.5 py-0.5 hover:bg-black/[0.03] dark:hover:bg-white/5 transition" title="Ver perfil">
-          <WhatsAppAvatar fotoUrl={conversacion.foto_perfil_url} nombre={conversacion.nombre_whatsapp || conversacion.wa_jid} size={36} />
+          <WhatsAppAvatar fotoUrl={conversacion.foto_perfil_url} nombre={nombreVisible(conversacion)} size={36} />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-bold truncate">{conversacion.nombre_whatsapp || conversacion.wa_jid.split("@")[0]}</div>
-            <div className="text-[10px] text-neutral-500 truncate">{numeroConBandera(conversacion.telefono_real || conversacion.wa_jid)}</div>
+            <div className="text-sm font-bold truncate">{nombreVisible(conversacion)}</div>
+            <div className="text-[10px] text-neutral-500 truncate flex items-center gap-1">
+              {esGrupo ? <><Users2 className="h-3 w-3" /> Grupo de WhatsApp</> : numeroConBandera(conversacion.telefono_real || conversacion.wa_jid)}
+            </div>
           </div>
         </button>
         <AsignadoPicker usuarios={usuarios} valor={conversacion.asignado_a} onChange={onAsignar} />
@@ -340,16 +290,29 @@ export function ConversationThread({
         ) : mensajes.length === 0 ? (
           <div className="h-full flex items-center justify-center text-xs text-neutral-400">Todavía no hay mensajes en esta conversación</div>
         ) : (
-          mensajes.map((m) => (
-            <Bubble
-              key={m.id}
-              m={m}
-              onRetry={onRetry}
-              // Un saliente real que reemplaza a su burbuja optimista (temp-) ya se animó al
-              // enviarse: no se vuelve a animar al reconciliarse con el id del servidor.
-              animar={!idsInicialesRef.current?.has(m.id) && (m.id.startsWith("temp-") || m.direccion === "entrante")}
-            />
-          ))
+          mensajes.map((m, i) => {
+            const dia = etiquetaDia(m.created_at);
+            const nuevoDia = i === 0 || etiquetaDia(mensajes[i - 1].created_at) !== dia;
+            return (
+              <div key={m.id}>
+                {nuevoDia && (
+                  <div className="flex justify-center my-3">
+                    <span className="text-[11px] font-semibold capitalize px-3 py-1 rounded-full glass-light text-neutral-500 shadow-sm">{dia}</span>
+                  </div>
+                )}
+                <MessageBubble
+                  m={m}
+                  esGrupo={esGrupo}
+                  onRetry={onRetry}
+                  onDescargar={onDescargar}
+                  onIrACita={irACita}
+                  // Un saliente real que reemplaza a su burbuja optimista (temp-) ya se animó al
+                  // enviarse: no se vuelve a animar al reconciliarse con el id del servidor.
+                  animar={!idsInicialesRef.current?.has(m.id) && (m.id.startsWith("temp-") || m.direccion === "entrante")}
+                />
+              </div>
+            );
+          })
         )}
       </div>
 

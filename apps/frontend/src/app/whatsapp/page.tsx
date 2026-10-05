@@ -36,13 +36,22 @@ function mergeMensajes(prev: WhatsAppMensaje[], incoming: WhatsAppMensaje[]): Wh
   );
 }
 
-function previewDe(msg: { contenido?: string | null; tipo: string }): string {
-  if (msg.contenido) return msg.contenido;
-  if (msg.tipo === "imagen") return "📷 Imagen";
-  if (msg.tipo === "video") return "🎥 Video";
-  if (msg.tipo === "audio") return "🎤 Audio";
-  if (msg.tipo === "archivo") return "📎 Archivo";
-  return "";
+function previewDe(msg: { contenido?: string | null; tipo: string; archivo_nombre?: string | null; autor_nombre?: string | null; direccion?: string; eliminado_at?: string | null }): string {
+  const json = <T,>(): T | null => { try { return msg.contenido ? JSON.parse(msg.contenido) : null; } catch { return null; } };
+  let base: string;
+  if (msg.eliminado_at) base = "🚫 Mensaje eliminado";
+  else if (msg.tipo === "texto" || msg.tipo === "sistema") base = msg.contenido || "";
+  else if (msg.tipo === "imagen") base = msg.contenido ? `📷 ${msg.contenido}` : "📷 Foto";
+  else if (msg.tipo === "video") base = msg.contenido ? `🎥 ${msg.contenido}` : "🎥 Video";
+  else if (msg.tipo === "audio") base = "🎤 Nota de voz";
+  else if (msg.tipo === "sticker") base = "Sticker";
+  else if (msg.tipo === "archivo") base = `📄 ${msg.archivo_nombre || msg.contenido || "Documento"}`;
+  else if (msg.tipo === "ubicacion") base = `📍 ${json<{ nombre?: string }>()?.nombre || "Ubicación"}`;
+  else if (msg.tipo === "contacto") base = `👤 ${json<{ nombre: string }[]>()?.[0]?.nombre || "Contacto"}`;
+  else if (msg.tipo === "encuesta") base = `📊 ${json<{ pregunta: string }>()?.pregunta || "Encuesta"}`;
+  else base = msg.contenido || "Mensaje";
+  // En grupos, como en WhatsApp: "Jair: Sticker".
+  return msg.autor_nombre && msg.direccion === "entrante" ? `${msg.autor_nombre}: ${base}` : base;
 }
 
 export default function WhatsAppPage() {
@@ -288,7 +297,19 @@ function WhatsAppPageInner() {
     const onEstado = (ev: any) => {
       setConexiones((cur) => cur.map((c) => c.id === ev.conexion_id ? { ...c, estado: ev.estado, telefono: ev.telefono || c.telefono, ultimo_error: ev.error || null } : c));
     };
-    const onMensaje = (ev: any) => {
+    // El canal en vivo no admite eventos grandes: un mensaje muy largo llega solo con su id
+    // (`recargar`) y se pide completo antes de mostrarlo.
+    const completar = async (ev: any): Promise<any | null> => {
+      if (!ev.recargar) return ev.mensaje;
+      try {
+        const r = await fetch(`/api/whatsapp/mensajes/${ev.mensaje.id}`);
+        return r.ok ? (await r.json()).mensaje : null;
+      } catch { return null; }
+    };
+    const onMensaje = async (ev: any) => {
+      const mensaje = await completar(ev);
+      if (!mensaje) { loadConversacionesRef.current({ silent: true }); return; }
+      ev = { ...ev, mensaje };
       if (ev.conexion_id === activeConexionIdRef.current) {
         const esActiva = ev.conversacion_id === activeConversacionIdRef.current;
         // Antes: recargaba TODA la lista de conversaciones por cada mensaje que llegaba — con la
@@ -324,6 +345,31 @@ function WhatsAppPageInner() {
       if (ev.conversacion_id === activeConversacionIdRef.current) loadConversacionDetalle(ev.conversacion_id);
       loadConversacionesRef.current({ silent: true });
     };
+    // Reacción, borrado, edición o media recién descargada: se reemplaza el mensaje en pantalla.
+    const onMensajeActualizado = async (ev: any) => {
+      if (ev.conversacion_id !== activeConversacionIdRef.current) {
+        if (ev.conexion_id === activeConexionIdRef.current) loadConversacionesRef.current({ silent: true });
+        return;
+      }
+      const mensaje = await completar(ev);
+      if (mensaje) setMensajes((cur) => cur ? cur.map((m) => (m.id === mensaje.id ? mensaje : m)) : cur);
+    };
+    // Importación del historial al vincular el número: llegan cientos de chats; la bandeja se
+    // recarga (como mucho cada 3 s, lo limita el servidor) en vez de procesar uno por uno.
+    const onHistorial = (ev: any) => {
+      if (ev.conexion_id !== activeConexionIdRef.current) return;
+      loadConversacionesRef.current({ silent: true });
+      const abierta = activeConversacionIdRef.current;
+      if (abierta) {
+        fetch(`/api/whatsapp/conversaciones/${abierta}/mensajes`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+          if (d && activeConversacionIdRef.current === abierta) setMensajes((cur) => mergeMensajes(cur || [], d.mensajes || []));
+        }).catch(() => {});
+      }
+    };
+    const onMediaError = (ev: any) => {
+      if (ev.conversacion_id !== activeConversacionIdRef.current) return;
+      toast.error("No se pudo descargar el archivo", { description: "Puede que ya no esté en el teléfono. Pídele al contacto que lo reenvíe." });
+    };
     // Al RE-conectar (wifi que vuelve, laptop que despierta) los eventos emitidos durante el corte
     // se perdieron: se vuelve a pedir la lista y la última página del hilo abierto, y se fusiona
     // por id — los mensajes nuevos aparecen y los checks que avanzaron se actualizan, sin esperar
@@ -354,6 +400,9 @@ function WhatsAppPageInner() {
     socket.on("whatsapp:mensaje-estado", onMensajeEstado);
     socket.on("whatsapp:foto-perfil", onFotoPerfil);
     socket.on("whatsapp:contacto-resuelto", onContactoResuelto);
+    socket.on("whatsapp:mensaje-actualizado", onMensajeActualizado);
+    socket.on("whatsapp:historial", onHistorial);
+    socket.on("whatsapp:media-error", onMediaError);
     return () => {
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
@@ -362,6 +411,9 @@ function WhatsAppPageInner() {
       socket.off("whatsapp:mensaje-estado", onMensajeEstado);
       socket.off("whatsapp:foto-perfil", onFotoPerfil);
       socket.off("whatsapp:contacto-resuelto", onContactoResuelto);
+      socket.off("whatsapp:mensaje-actualizado", onMensajeActualizado);
+      socket.off("whatsapp:historial", onHistorial);
+      socket.off("whatsapp:media-error", onMediaError);
     };
   }, []);
 
@@ -378,6 +430,15 @@ function WhatsAppPageInner() {
     setVista("lista");
     loadConversacionDetalle(conversacionId);
     loadMensajes(conversacionId);
+  };
+
+  // Media del historial (o que no se pudo bajar en vivo): el worker la descarga y la reemplaza en
+  // pantalla vía `whatsapp:mensaje-actualizado`.
+  const descargarMedia = async (m: WhatsAppMensaje) => {
+    const r = await fetch(`/api/whatsapp/mensajes/${m.id}/descargar`, { method: "POST" });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { toast.error(d.error || "No se pudo pedir la descarga"); return; }
+    if (d.mensaje) setMensajes((cur) => cur ? cur.map((x) => (x.id === d.mensaje.id ? d.mensaje : x)) : cur);
   };
 
   const enviarMensaje = async (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number }) => {
@@ -604,6 +665,7 @@ function WhatsAppPageInner() {
                   onToggleTag={toggleTag}
                   onCrearTag={crearTag}
                   onAbrirPerfil={() => setPerfilOpen(true)}
+                  onDescargar={descargarMedia}
                 />
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6 chat-bg">

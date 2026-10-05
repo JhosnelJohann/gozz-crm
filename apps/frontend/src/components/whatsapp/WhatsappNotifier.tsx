@@ -1,4 +1,5 @@
 "use client";
+import { nombreVisible } from "@/lib/whatsapp-numero";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { usePathname, useRouter } from "next/navigation";
@@ -69,7 +70,7 @@ export function WhatsappNotifier() {
         const r = await fetch(`/api/whatsapp/conversaciones/${ev.conversacion_id}`);
         if (r.ok) {
           const d = await r.json();
-          nombre = d.conversacion?.nombre_whatsapp || d.conversacion?.wa_jid?.split("@")[0] || nombre;
+          nombre = d.conversacion ? nombreVisible(d.conversacion) : nombre;
           foto = d.conversacion?.foto_perfil_url || null;
         }
       } catch {}

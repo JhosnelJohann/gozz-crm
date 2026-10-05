@@ -32,7 +32,34 @@ async function resolverConversacionConAcceso(req: Request, res: Response, conver
   return conversacion;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function resolverMensajeConAcceso(req: Request, res: Response, mensajeId: string) {
+  const mensaje = UUID_RE.test(mensajeId) ? await repo.getMensaje(mensajeId) : null;
+  if (!mensaje) { res.status(404).json({ error: "Mensaje no encontrado" }); return null; }
+  if (!(await resolverConversacionConAcceso(req, res, mensaje.conversacion_id))) return null;
+  return mensaje;
+}
+
 export function registerWhatsAppRoutes(app: Express, upload: Multer) {
+  // Un mensaje suelto: la bandeja lo pide cuando el evento en vivo llegó sin el contenido (era
+  // demasiado grande para el canal de notificaciones) o tras descargar su media.
+  app.get("/api/whatsapp/mensajes/:id", requireAuth, async (req, res) => {
+    const mensaje = await resolverMensajeConAcceso(req, res, String(req.params.id));
+    if (mensaje) res.json({ mensaje });
+  });
+
+  // Media que se guardó sin archivo (historial importado, o una descarga en vivo que falló): el
+  // worker la baja y avisa por el canal en vivo (`whatsapp:mensaje-actualizado` o `media-error`).
+  app.post("/api/whatsapp/mensajes/:id/descargar", requireAuth, async (req, res) => {
+    const mensaje = await resolverMensajeConAcceso(req, res, String(req.params.id));
+    if (!mensaje) return;
+    if (mensaje.archivo_url) { res.json({ ok: true, mensaje }); return; }
+    if (!mensaje.media_pendiente) { res.status(400).json({ error: "Ese mensaje no tiene archivo para descargar" }); return; }
+    await service.solicitarDescargaMedia(mensaje.id);
+    res.status(202).json({ ok: true, pendiente: true });
+  });
+
   app.post("/api/whatsapp/upload", requireAuth, upload.single("file"), async (req, res) => {
     const f = (req as any).file;
     if (!f) { res.status(400).json({ error: "No file" }); return; }

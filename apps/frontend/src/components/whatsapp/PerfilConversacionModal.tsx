@@ -4,7 +4,7 @@ import { AnimatedModal } from "@/components/ui/AnimatedModal";
 import { Button } from "@/components/ui/Button";
 import { X, Link2, Briefcase, CheckCircle2 } from "@/lib/bootstrap-icons";
 import { WhatsAppAvatar } from "./WhatsAppAvatar";
-import { formatearNumeroWhatsApp } from "@/lib/whatsapp-numero";
+import { formatearNumeroWhatsApp, nombreVisible } from "@/lib/whatsapp-numero";
 import type { WhatsAppConversacionDetalle } from "./types";
 
 interface Props {
@@ -21,7 +21,7 @@ const VINCULO_LABEL: Record<WhatsAppConversacionDetalle["contacto_vinculo_estado
 };
 
 export function PerfilConversacionModal({ conversacion, onClose, onVincular, onConvertir }: Props) {
-  const nombre = conversacion.nombre_whatsapp || conversacion.wa_jid.split("@")[0];
+  const nombre = nombreVisible(conversacion);
   const { texto: numero, bandera } = formatearNumeroWhatsApp(conversacion.telefono_real || conversacion.wa_jid);
   return (
     <AnimatedModal onClose={onClose} panelClassName="w-full max-w-sm glass-panel rounded-2xl overflow-hidden">

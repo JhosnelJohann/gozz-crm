@@ -8,12 +8,18 @@ import type {
   WhatsAppOutgoingMessage,
   WhatsAppIncomingMessage,
   WhatsAppConnectionUpdate,
+  WhatsAppMensajeModificado,
+  WhatsAppChatInfo,
+  WhatsAppMediaDescargada,
 } from "./whatsapp-provider.interface.js";
 
 export class FakeWhatsAppProvider implements WhatsAppProvider {
   private qrCbs: ((conexionId: string, qr: string) => void)[] = [];
   private stateCbs: ((conexionId: string, update: WhatsAppConnectionUpdate) => void)[] = [];
-  private msgCbs: ((conexionId: string, msg: WhatsAppIncomingMessage) => void)[] = [];
+  private msgCbs: ((conexionId: string, msg: WhatsAppIncomingMessage) => void | Promise<void>)[] = [];
+  private modCbs: ((conexionId: string, mod: WhatsAppMensajeModificado) => void)[] = [];
+  private chatCbs: ((conexionId: string, chats: WhatsAppChatInfo[], opts: { historial: boolean }) => void | Promise<void>)[] = [];
+  public descargas: string[] = [];
   private statusCbs: ((conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void)[] = [];
   private contactoCbs: ((conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }) => void)[] = [];
   public sent: { conexionId: string; msg: WhatsAppOutgoingMessage }[] = [];
@@ -43,8 +49,18 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
   onConnectionUpdate(cb: (conexionId: string, update: WhatsAppConnectionUpdate) => void): void {
     this.stateCbs.push(cb);
   }
-  onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void): void {
+  onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void | Promise<void>): void {
     this.msgCbs.push(cb);
+  }
+  onMensajeModificado(cb: (conexionId: string, mod: WhatsAppMensajeModificado) => void): void {
+    this.modCbs.push(cb);
+  }
+  onChats(cb: (conexionId: string, chats: WhatsAppChatInfo[], opts: { historial: boolean }) => void | Promise<void>): void {
+    this.chatCbs.push(cb);
+  }
+  async descargarMedia(_conexionId: string, mediaMeta: string): Promise<WhatsAppMediaDescargada> {
+    this.descargas.push(mediaMeta);
+    return { archivoUrl: "/uploads/whatsapp/entrantes/fake/media.jpg", archivoNombre: "media.jpg", archivoTipo: "image/jpeg", archivoTamanio: 1234 };
   }
   onMessageStatusUpdate(cb: (conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void): void {
     this.statusCbs.push(cb);

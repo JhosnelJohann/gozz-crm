@@ -7,6 +7,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { WhatsAppAvatar } from "./WhatsAppAvatar";
+import { nombreVisible } from "@/lib/whatsapp-numero";
 import type { ConversacionItem } from "./ConversationList";
 import type { WhatsAppPipelineStage } from "./types";
 
@@ -27,10 +28,10 @@ function TarjetaConversacion({ c, onOpen }: { c: ConversacionItem; onOpen: () =>
       className={cn("rounded-xl glass-light p-2.5 cursor-grab active:cursor-grabbing transition", isDragging && "opacity-30")}
     >
       <div className="flex items-start gap-2">
-        <WhatsAppAvatar fotoUrl={c.foto_perfil_url} nombre={c.nombre_whatsapp || c.wa_jid} size={32} />
+        <WhatsAppAvatar fotoUrl={c.foto_perfil_url} nombre={nombreVisible(c)} size={32} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1">
-            <div className="text-[12.5px] font-bold truncate flex-1">{c.nombre_whatsapp || c.wa_jid.split("@")[0]}</div>
+            <div className="text-[12.5px] font-bold truncate flex-1">{nombreVisible(c)}</div>
             {c.no_leidos_count > 0 && (
               <span className="text-[9px] font-bold text-white bg-brand-green rounded-full h-4 min-w-[16px] px-1 flex items-center justify-center tabular-nums shrink-0">
                 {c.no_leidos_count > 99 ? "99+" : c.no_leidos_count}
@@ -160,8 +161,8 @@ export function WhatsappKanban({ conexionId, etapas, onAbrirConversacion }: Prop
         {activa && (
           <div className="rounded-xl glass-panel p-2.5 w-[260px] shadow-2xl">
             <div className="flex items-center gap-2">
-              <WhatsAppAvatar fotoUrl={activa.foto_perfil_url} nombre={activa.nombre_whatsapp || activa.wa_jid} size={28} />
-              <div className="text-[12.5px] font-bold truncate">{activa.nombre_whatsapp || activa.wa_jid.split("@")[0]}</div>
+              <WhatsAppAvatar fotoUrl={activa.foto_perfil_url} nombre={nombreVisible(activa)} size={28} />
+              <div className="text-[12.5px] font-bold truncate">{nombreVisible(activa)}</div>
             </div>
           </div>
         )}

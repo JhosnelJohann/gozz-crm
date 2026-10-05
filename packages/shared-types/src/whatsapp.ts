@@ -6,7 +6,7 @@ export type WhatsAppProveedor = "baileys" | "meta_cloud";
 export type WhatsAppConexionEstado = "pendiente" | "conectando" | "conectado" | "desconectado" | "error" | "cerrada";
 export type WhatsAppVinculoEstado = "sin_vincular" | "vinculado_auto" | "vinculado_manual";
 export type WhatsAppMensajeDireccion = "entrante" | "saliente";
-export type WhatsAppMensajeTipo = "texto" | "imagen" | "archivo" | "audio" | "video" | "sistema";
+export type WhatsAppMensajeTipo = "texto" | "imagen" | "archivo" | "audio" | "video" | "sistema" | "sticker" | "ubicacion" | "contacto" | "encuesta";
 export type WhatsAppMensajeEstado = "pendiente" | "enviado" | "entregado" | "leido" | "fallido";
 
 export interface WhatsAppConexion {
@@ -62,6 +62,7 @@ export interface WhatsAppConversacion {
   ultimo_mensaje_direccion: WhatsAppMensajeDireccion | null;
   no_leidos_count: number;
   archivado: boolean;
+  es_grupo?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -86,4 +87,17 @@ export interface WhatsAppMensaje {
    * este mensaje dentro del CRM. */
   visto_at: string | null;
   visto_por: string | null;
+  /** Grupos: quién escribió. */
+  autor_jid?: string | null;
+  autor_nombre?: string | null;
+  /** Respuesta citando otro mensaje. */
+  respuesta_a?: string | null;
+  respuesta_preview?: string | null;
+  /** { "<jid de quien reacciona>": "👍" } */
+  reacciones?: Record<string, string>;
+  editado_at?: string | null;
+  eliminado_at?: string | null;
+  /** Tiene media que todavía no se descargó (historial o descarga fallida): se baja al pedirla. */
+  media_pendiente?: boolean;
+  historico?: boolean;
 }

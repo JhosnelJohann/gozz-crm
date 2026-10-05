@@ -26,6 +26,15 @@ function banderaDesdeISO(iso2?: string): string | null {
  * uno. Mostrarlo como si fuera un teléfono sería mentir con más precisión, no menos — por eso este
  * caso devuelve un texto explícito en vez de un número inventado.
  */
+/** Nombre a mostrar de una conversación: el de WhatsApp, o el número formateado. Nunca los dígitos
+ * de un `@lid` (son un identificador interno de WhatsApp, no un teléfono). */
+export function nombreVisible(c: { nombre_whatsapp: string | null; wa_jid: string; telefono_real?: string | null }): string {
+  if (c.nombre_whatsapp) return c.nombre_whatsapp;
+  if (c.wa_jid.endsWith("@g.us")) return "Grupo de WhatsApp";
+  if (c.wa_jid.endsWith("@lid") && !c.telefono_real) return "Contacto de WhatsApp";
+  return formatearNumeroWhatsApp(c.telefono_real || c.wa_jid).texto;
+}
+
 export function formatearNumeroWhatsApp(jidODigitos: string): NumeroFormateado {
   const [parte, servidor] = jidODigitos.split("@");
   if (servidor === "lid" || servidor === "g.us") {
