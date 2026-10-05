@@ -88,6 +88,7 @@ export async function construirContexto(conversacionId: string) {
     conversacion: {
       id: c.id,
       conexion_id: c.conexion_id,
+      es_grupo: c.wa_jid.endsWith("@g.us"),
       nombre: c.nombre_whatsapp,
       telefono: e164(c.telefono_real) ?? e164(c.wa_jid),
       etapa: etapa ? { id: etapa.id, key: etapa.key, label: etapa.label } : null,

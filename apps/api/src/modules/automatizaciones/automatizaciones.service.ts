@@ -63,6 +63,9 @@ export async function evaluarReglasParaMensaje(conversacionId: string, mensaje: 
   try {
     const conversacion = await whatsappRepo.getConversacion(conversacionId);
     if (!conversacion) return;
+    // Nunca en grupos: un agente de IA respondiendo solo dentro de un grupo sería un desastre de
+    // imagen (y WhatsApp lo castiga). Los grupos llegan al CRM desde la Parte H.
+    if (conversacion.wa_jid.endsWith("@g.us")) return;
     const tags = await whatsappRepo.tagsDeConversacion(conversacionId);
     const regla = await repo.buscarReglaParaConversacion(conversacion.etapa_id, tags.map((t) => t.id));
     if (!regla || !regla.agente_activo) return;

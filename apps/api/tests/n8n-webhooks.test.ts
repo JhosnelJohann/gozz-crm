@@ -216,6 +216,24 @@ describe("n8n — eventos por suscripción", () => {
   });
 });
 
+describe("n8n — grupos", () => {
+  it("🔴 una regla nunca hace que la IA responda dentro de un grupo", async () => {
+    reiniciarN8n();
+    const userId = await usuarioDePruebas();
+    const conexion = await whatsappService.crearConexion(`Conexión ${sufijo()}`, userId);
+    const jid = `1203639${String(Date.now()).slice(-7)}@g.us`;
+    await whatsappService.registrarMensajeEntrante(conexion.id, { jid, waMessageId: `WA-${sufijo()}`, tipo: "texto", contenido: "Hola grupo", timestamp: new Date() } as any);
+    const c = (await whatsappRepo.getConversacionPorJid(conexion.id, jid))!;
+    const a = await agente();
+    const tag = await whatsappService.crearTag(`Grupo ${sufijo()}`, "#5750E8");
+    await whatsappService.agregarTag(c.id, tag.id);
+    await service.crearRegla({ nombre: `Regla ${sufijo()}`, etapaId: c.etapa_id, tagId: tag.id, agenteId: a.id, asignarConversacion: true });
+    await service.evaluarReglasParaMensaje(c.id, { direccion: "entrante", contenido: "precio?", tipo: "texto" });
+    expect(llamadas.filter((l) => l.json.agente_id === a.id)).toHaveLength(0);
+    expect((await whatsappRepo.getConversacion(c.id))?.asignado_a).not.toBe(a.id);
+  });
+});
+
 describe("n8n — acciones sobre la conversación", () => {
   it("cambia la etapa por key; una key que no existe es un error claro", async () => {
     const c = await conversacion();
