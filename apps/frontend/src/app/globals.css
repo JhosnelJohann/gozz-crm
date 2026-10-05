@@ -432,6 +432,27 @@ html.dark .spotlight-card::before {
   background: radial-gradient(circle, rgba(87, 80, 232, 0.25) 0%, transparent 60%);
 }
 
+/* ========== WHATSAPP · MICRO-INTERACCIONES ========== */
+/* Cortas (≤200 ms) y con easing de salida: dan sensación de respuesta inmediata sin estorbar al
+   chatear rápido. Las desactiva sola la regla global de prefers-reduced-motion de abajo. */
+@keyframes wa-bubble-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.wa-bubble-in { animation: wa-bubble-in 0.18s cubic-bezier(0.23, 1, 0.32, 1) both; }
+@keyframes wa-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.wa-menu-in { animation: wa-menu-in 0.14s cubic-bezier(0.23, 1, 0.32, 1) both; transform-origin: top right; }
+@keyframes wa-thread-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}
+.wa-thread-in { animation: wa-thread-in 0.2s cubic-bezier(0.23, 1, 0.32, 1) both; }
+@keyframes wa-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.wa-img-in { animation: wa-fade-in 0.25s ease-out both; }
+
 /* ========== REDUCED MOTION ========== */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -449,6 +470,15 @@ html.tab-hidden *,
 html.tab-hidden *::before,
 html.tab-hidden *::after {
   animation-play-state: paused !important;
+}
+/* Excepción: las animaciones de ENTRADA de WhatsApp parten de opacity 0. Pausadas, el hilo, la
+   burbuja o el aviso de reconexión se quedarían invisibles (p. ej. al abrir un chat justo cuando
+   la pestaña pasa a segundo plano). En segundo plano se muestran directamente, sin animación. */
+html.tab-hidden .wa-bubble-in,
+html.tab-hidden .wa-menu-in,
+html.tab-hidden .wa-thread-in,
+html.tab-hidden .wa-img-in {
+  animation: none !important;
 }
 
 /* ========== LIGHT MODE CONTRAST AUTO-FIX (SCOPED) ========== */

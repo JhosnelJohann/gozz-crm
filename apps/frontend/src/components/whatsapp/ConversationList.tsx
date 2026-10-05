@@ -86,7 +86,7 @@ function TagFiltroDropdown({ tags, valor, onChange }: { tags: WhatsAppTag[]; val
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
             style={{ position: "fixed", top: pos.top, left: pos.left }}
-            className="z-50 w-48 max-h-64 overflow-y-auto rounded-xl glass-panel py-1"
+            className="z-50 w-48 max-h-64 overflow-y-auto rounded-xl glass-panel py-1 wa-menu-in"
           >
             <button
               onClick={() => { onChange(null); setOpen(false); }}

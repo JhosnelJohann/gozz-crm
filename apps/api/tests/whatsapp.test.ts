@@ -644,6 +644,34 @@ async function conversacionNueva(prefijo: string) {
   return { userId, conexion, jid, conv: conv! };
 }
 
+describe("WhatsApp — historial hacia atrás (Parte G)", () => {
+  it("🔴 pagina con el id del mensaje más viejo como cursor, sin saltar ni repetir mensajes con la misma hora", async () => {
+    const { conv } = await conversacionNueva("52177");
+    // 6 mensajes más, todos con la MISMA marca de tiempo (ráfaga), además del de apertura.
+    const misma = new Date().toISOString();
+    for (let i = 0; i < 6; i++) {
+      await query(
+        `INSERT INTO gozz.whatsapp_mensajes (conversacion_id, wa_message_id, direccion, tipo, contenido, estado_entrega, created_at)
+         VALUES ($1, $2, 'entrante', 'texto', $3, 'entregado', $4)`,
+        [conv.id, `WA-pag-${sufijo()}`, `m${i}`, misma]
+      );
+    }
+    const vistos = new Set<string>();
+    let pagina = await repo.listMensajes(conv.id, 3);
+    let vueltas = 0;
+    while (pagina.length && vueltas++ < 10) {
+      for (const m of pagina) { expect(vistos.has(m.id)).toBe(false); vistos.add(m.id); }
+      pagina = await repo.listMensajes(conv.id, 3, pagina[0].id);
+    }
+    expect(vistos.size).toBe(7);
+  });
+
+  it("un cursor que no es un id válido devuelve vacío en vez de reventar", async () => {
+    const { conv } = await conversacionNueva("52178");
+    await expect(repo.listMensajes(conv.id, 50, new Date().toISOString())).resolves.toEqual([]);
+  });
+});
+
 describe("WhatsApp — carreras del envío (Parte G)", () => {
   it("🔴 un acuse de 'entregado' que llega ANTES de la confirmación de envío no se pierde ni retrocede a 'enviado'", async () => {
     const { userId, conv } = await conversacionNueva("52155");

@@ -494,17 +494,26 @@ export async function insertMensaje(d: NuevoMensaje): Promise<WhatsAppMensaje | 
   return rows[0] ?? null; // null = ya existía (idempotencia por wa_message_id)
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Página de mensajes, del más viejo al más nuevo. `before` = id del mensaje más viejo ya cargado
+ * (cursor para el scroll hacia arriba). Se compara la tupla (created_at, id) y no solo la hora:
+ * dos mensajes con la misma marca de tiempo (ráfagas, sincronización de historial) no se saltan ni
+ * se repiten entre páginas. Un cursor que no es un uuid se rechaza en vez de reventar en Postgres. */
 export async function listMensajes(conversacionId: string, limit = 50, before?: string): Promise<WhatsAppMensaje[]> {
   if (before) {
+    if (!UUID_RE.test(before)) return [];
     const rows = await query<WhatsAppMensaje>(
-      `SELECT * FROM gozz.whatsapp_mensajes WHERE conversacion_id = $1 AND created_at < (SELECT created_at FROM gozz.whatsapp_mensajes WHERE id = $2)
-       ORDER BY created_at DESC LIMIT $3`,
+      `SELECT * FROM gozz.whatsapp_mensajes
+        WHERE conversacion_id = $1
+          AND (created_at, id) < (SELECT created_at, id FROM gozz.whatsapp_mensajes WHERE id = $2)
+        ORDER BY created_at DESC, id DESC LIMIT $3`,
       [conversacionId, before, limit]
     );
     return rows.reverse();
   }
   const rows = await query<WhatsAppMensaje>(
-    "SELECT * FROM gozz.whatsapp_mensajes WHERE conversacion_id = $1 ORDER BY created_at DESC LIMIT $2",
+    "SELECT * FROM gozz.whatsapp_mensajes WHERE conversacion_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
     [conversacionId, limit]
   );
   return rows.reverse();

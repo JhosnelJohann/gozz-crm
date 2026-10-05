@@ -70,7 +70,7 @@ export function ConversationComposer({ onSend, disabled }: Props) {
   };
 
   return (
-    <div className="shrink-0 border-t border-black/5 dark:border-white/10 p-3 flex items-end gap-2 backdrop-blur-md bg-white/70 dark:bg-white/[0.03] relative">
+    <div className="shrink-0 border-t border-black/5 dark:border-white/10 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex items-end gap-2 backdrop-blur-md bg-white/70 dark:bg-white/[0.03] relative">
       <input
         ref={fileRef}
         type="file"

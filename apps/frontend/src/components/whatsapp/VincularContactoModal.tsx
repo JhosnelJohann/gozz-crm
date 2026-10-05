@@ -128,7 +128,7 @@ export function VincularContactoModal({ onClose, onVinculado, nombreSugerido, te
           <div className="mt-3 max-h-72 overflow-y-auto space-y-1">
             {buscando && <div className="text-center text-xs text-neutral-400 py-4">Buscando…</div>}
             {!buscando && q.trim().length >= 2 && resultados.length === 0 && (
-              <div className="text-center text-xs text-neutral-400 py-4">Sin resultados. Prueba con "Crear nuevo".</div>
+              <div className="text-center text-xs text-neutral-400 py-4">Sin resultados. Prueba con &ldquo;Crear nuevo&rdquo;.</div>
             )}
             {resultados.map((c) => (
               <button

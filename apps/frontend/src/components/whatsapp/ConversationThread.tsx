@@ -16,9 +16,13 @@ import type { WhatsAppConversacionDetalle, WhatsAppMensaje, WhatsAppPipelineStag
  * pipeline en otras partes del CRM, para que un tag nuevo no desentone. */
 const COLORES_TAG = ["#5750E8", "#43A847", "#E53935", "#2196C9", "#FFB51C", "#33359D", "#8338EC"];
 
+/** Igual que WhatsApp: reloj = saliendo, ✓ gris = lo recibió el servidor de WhatsApp, ✓✓ gris =
+ * llegó al teléfono del contacto, ✓✓ azul = lo leyó. "enviado" es UN solo check — antes se
+ * mostraba como doble y no había forma de distinguir "salió" de "le llegó". */
 function estadoToStatus(e: WhatsAppMensaje["estado_entrega"]): Status {
   if (e === "leido") return "read";
-  if (e === "entregado" || e === "enviado") return "delivered";
+  if (e === "entregado") return "delivered";
+  if (e === "enviado") return "sent";
   if (e === "pendiente") return "pending";
   if (e === "fallido") return "failed";
   return "sent";
@@ -33,11 +37,11 @@ function numeroConBandera(jid: string): string {
   return bandera ? `${bandera} ${texto}` : texto;
 }
 
-function Bubble({ m, onRetry }: { m: WhatsAppMensaje; onRetry?: (m: WhatsAppMensaje) => void }) {
+function Bubble({ m, onRetry, animar }: { m: WhatsAppMensaje; onRetry?: (m: WhatsAppMensaje) => void; animar?: boolean }) {
   const isMe = m.direccion === "saliente";
   const fallido = m.estado_entrega === "fallido";
   return (
-    <div className={cn("flex", isMe ? "justify-end" : "justify-start")}>
+    <div className={cn("flex", isMe ? "justify-end" : "justify-start", animar && "wa-bubble-in")}>
       <div
         className={cn(
           "max-w-[78%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm",
@@ -50,7 +54,7 @@ function Bubble({ m, onRetry }: { m: WhatsAppMensaje; onRetry?: (m: WhatsAppMens
       >
         {m.tipo === "texto" && <div className="text-sm whitespace-pre-wrap break-words">{m.contenido}</div>}
         {m.tipo === "imagen" && m.archivo_url && (
-          <img src={m.archivo_url} alt="" className="rounded-lg max-w-[260px] max-h-[320px] object-cover" />
+          <img src={m.archivo_url} alt="" loading="lazy" decoding="async" className="rounded-lg max-w-[260px] max-h-[320px] object-cover wa-img-in" />
         )}
         {m.tipo === "video" && m.archivo_url && (
           <video src={m.archivo_url} controls className="rounded-lg max-w-[260px] max-h-[320px]" />
@@ -112,7 +116,7 @@ function StagePicker({ etapas, valor, onChange }: { etapas: WhatsAppPipelineStag
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-1 z-20 w-52 max-w-[calc(100vw-2rem)] rounded-xl glass-panel py-1 overflow-hidden">
+          <div className="absolute right-0 mt-1 z-20 w-52 max-w-[calc(100vw-2rem)] rounded-xl glass-panel py-1 overflow-hidden wa-menu-in">
             {etapas.map((e) => (
               <button
                 key={e.id}
@@ -166,7 +170,7 @@ function TagPicker({ todas, activas, onToggle, onCrear }: {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => { setOpen(false); setCreando(false); }} />
-          <div className="absolute right-0 mt-1 z-20 w-56 max-w-[calc(100vw-2rem)] rounded-xl glass-panel py-1 overflow-hidden">
+          <div className="absolute right-0 mt-1 z-20 w-56 max-w-[calc(100vw-2rem)] rounded-xl glass-panel py-1 overflow-hidden wa-menu-in">
             <div className="max-h-56 overflow-y-auto">
               {todas.length === 0 && !creando && <div className="px-3 py-2 text-[11px] text-neutral-400">Sin tags creados aún</div>}
               {todas.map((t) => {
@@ -257,6 +261,10 @@ export function ConversationThread({
   const prevFirstIdRef = useRef<string | null>(null);
   const prevLastIdRef = useRef<string | null>(null);
   const prevLenRef = useRef(0);
+  // Ids que ya estaban al abrir el chat: esos NO se animan (abrir un chat con 50 mensajes no debe
+  // "llover" burbujas). Solo entran animados los que llegan o se envían mientras se mira.
+  const idsInicialesRef = useRef<Set<string> | null>(null);
+  if (mensajes && idsInicialesRef.current === null) idsInicialesRef.current = new Set(mensajes.map((m) => m.id));
 
   // Scroll cerca del tope → trae el historial anterior (antes el módulo cargaba fijo los últimos
   // 50 mensajes y no había forma de ver nada más viejo, aunque el backend ya soportaba el cursor).
@@ -302,7 +310,7 @@ export function ConversationThread({
   }, [mensajes, conversacion.id]);
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 h-full">
+    <div className="flex-1 flex flex-col min-w-0 h-full wa-thread-in">
       <div className="shrink-0 flex items-center gap-2.5 px-4 py-3 border-b border-black/5 dark:border-white/10 glass-topbar">
         {onBack && (
           <button onClick={onBack} className="lg:hidden h-8 w-8 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 flex items-center justify-center shrink-0">
@@ -332,7 +340,16 @@ export function ConversationThread({
         ) : mensajes.length === 0 ? (
           <div className="h-full flex items-center justify-center text-xs text-neutral-400">Todavía no hay mensajes en esta conversación</div>
         ) : (
-          mensajes.map((m) => <Bubble key={m.id} m={m} onRetry={onRetry} />)
+          mensajes.map((m) => (
+            <Bubble
+              key={m.id}
+              m={m}
+              onRetry={onRetry}
+              // Un saliente real que reemplaza a su burbuja optimista (temp-) ya se animó al
+              // enviarse: no se vuelve a animar al reconciliarse con el id del servidor.
+              animar={!idsInicialesRef.current?.has(m.id) && (m.id.startsWith("temp-") || m.direccion === "entrante")}
+            />
+          ))
         )}
       </div>
 

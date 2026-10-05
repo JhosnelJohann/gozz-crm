@@ -40,7 +40,7 @@ export function AsignadoPicker({ usuarios, valor, onChange }: Props) {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-1 z-20 w-56 max-w-[calc(100vw-2rem)] max-h-64 overflow-y-auto rounded-xl glass-panel py-1">
+          <div className="absolute right-0 mt-1 z-20 w-56 max-w-[calc(100vw-2rem)] max-h-64 overflow-y-auto rounded-xl glass-panel py-1 wa-menu-in">
             <button
               onClick={() => { onChange(null); setOpen(false); }}
               className="w-full text-left px-3 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-2 transition"

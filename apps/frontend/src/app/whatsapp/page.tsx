@@ -65,6 +65,9 @@ function WhatsAppPageInner() {
   const [busquedaDebounced, setBusquedaDebounced] = useState("");
   const [usuarios, setUsuarios] = useState<UsuarioAsignable[]>([]);
   const [vista, setVista] = useState<"lista" | "tablero">("lista");
+  // Estado del canal en vivo (socket.io). Mientras está caído se muestra "Reconectando…" y, al
+  // volver, se resincroniza todo lo que pudo pasar en el hueco (ver onConnect más abajo).
+  const [enVivo, setEnVivo] = useState(true);
   const [conversaciones, setConversaciones] = useState<ConversacionItem[] | null>(null);
   const [loadingConv, setLoadingConv] = useState(false);
   const [activeConversacion, setActiveConversacion] = useState<WhatsAppConversacionDetalle | null>(null);
@@ -162,12 +165,13 @@ function WhatsAppPageInner() {
   // por el backend pero nunca usado desde aquí — el historial estaba limitado a los últimos 50).
   const loadMensajesAnteriores = useCallback(async () => {
     if (!activeConversacion || loadingOlderMensajesRef.current) return;
-    const masViejo = mensajes?.[0];
+    // Cursor = id del mensaje más viejo REAL (no uno optimista `temp-`, que el servidor no conoce).
+    const masViejo = mensajes?.find((m) => !m.id.startsWith("temp-"));
     if (!masViejo) return;
     loadingOlderMensajesRef.current = true;
     setLoadingOlderMensajes(true);
     try {
-      const r = await fetch(`/api/whatsapp/conversaciones/${activeConversacion.id}/mensajes?before=${encodeURIComponent(masViejo.created_at)}`);
+      const r = await fetch(`/api/whatsapp/conversaciones/${activeConversacion.id}/mensajes?before=${encodeURIComponent(masViejo.id)}`);
       if (!r.ok) return;
       const d = await r.json();
       const anteriores: WhatsAppMensaje[] = Array.isArray(d.mensajes) ? d.mensajes : [];
@@ -320,12 +324,39 @@ function WhatsAppPageInner() {
       if (ev.conversacion_id === activeConversacionIdRef.current) loadConversacionDetalle(ev.conversacion_id);
       loadConversacionesRef.current({ silent: true });
     };
+    // Al RE-conectar (wifi que vuelve, laptop que despierta) los eventos emitidos durante el corte
+    // se perdieron: se vuelve a pedir la lista y la última página del hilo abierto, y se fusiona
+    // por id — los mensajes nuevos aparecen y los checks que avanzaron se actualizan, sin esperar
+    // al sondeo de respaldo de 15 s ni duplicar nada.
+    let yaConecto = socket.connected;
+    const onConnect = () => {
+      setEnVivo(true);
+      if (!yaConecto) { yaConecto = true; return; }
+      loadConexionesRef.current();
+      loadConversacionesRef.current({ silent: true });
+      const abierta = activeConversacionIdRef.current;
+      if (abierta) {
+        fetch(`/api/whatsapp/conversaciones/${abierta}/mensajes`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            if (!d || activeConversacionIdRef.current !== abierta) return;
+            setMensajes((cur) => mergeMensajes(cur || [], d.mensajes || []));
+          })
+          .catch(() => {});
+      }
+    };
+    const onDisconnect = () => setEnVivo(false);
+    if (!socket.connected) setEnVivo(false);
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
     socket.on("whatsapp:estado", onEstado);
     socket.on("whatsapp:mensaje", onMensaje);
     socket.on("whatsapp:mensaje-estado", onMensajeEstado);
     socket.on("whatsapp:foto-perfil", onFotoPerfil);
     socket.on("whatsapp:contacto-resuelto", onContactoResuelto);
     return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
       socket.off("whatsapp:estado", onEstado);
       socket.off("whatsapp:mensaje", onMensaje);
       socket.off("whatsapp:mensaje-estado", onMensajeEstado);
@@ -482,7 +513,16 @@ function WhatsAppPageInner() {
 
   return (
     <AppShell>
-      <div className="h-[calc(100vh-4rem)] flex flex-col overflow-hidden relative">
+      {/* dvh y no vh: en móvil 100vh incluye la barra del navegador y el compositor quedaba tapado. */}
+      <div className="h-[calc(100dvh-4rem)] flex flex-col overflow-hidden relative">
+        {!enVivo && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 wa-menu-in pointer-events-none">
+            <div className="flex items-center gap-2 rounded-full glass-panel px-3 py-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400 shadow-md">
+              <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+              Reconectando… los mensajes se sincronizan al volver
+            </div>
+          </div>
+        )}
         {vista === "tablero" ? (
           <>
             <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 glass-topbar">
@@ -544,6 +584,9 @@ function WhatsAppPageInner() {
             <div className={cn("flex-1 min-w-0 flex-col", activeConversacion ? "flex" : "hidden lg:flex")}>
               {activeConversacion ? (
                 <ConversationThread
+                  // Montaje nuevo por conversación: entra animada, vuelve al fondo del hilo y el
+                  // borrador del compositor no se "pasa" de un chat a otro.
+                  key={activeConversacion.id}
                   conversacion={activeConversacion}
                   mensajes={mensajes}
                   etapas={etapas}

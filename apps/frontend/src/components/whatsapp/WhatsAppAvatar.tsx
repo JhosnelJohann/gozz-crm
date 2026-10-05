@@ -9,29 +9,39 @@ interface Props {
   className?: string;
 }
 
-/** Foto de perfil real cuando existe; si no hay, o la URL de WhatsApp ya expiró, cae a las
- * iniciales de siempre — nunca un hueco en blanco. */
+/** Foto de perfil real cuando existe; si no hay, o no carga, cae a las iniciales — nunca un hueco
+ * en blanco. Las iniciales se pintan DEBAJO mientras la foto carga (lazy, decodificación fuera del
+ * hilo principal) y la foto entra con un fundido: con 50 conversaciones en la lista no se bloquea
+ * el scroll ni se ven saltos. Las fotos se sirven desde almacenamiento propio con caché de una
+ * semana (ver persistirFoto en baileys.provider.ts), no desde el CDN de WhatsApp, que caduca. */
 export function WhatsAppAvatar({ fotoUrl, nombre, size = 40, className }: Props) {
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [cargada, setCargada] = useState<string | null>(null);
   const inicial = (nombre || "?").trim().slice(0, 1).toUpperCase();
+  const mostrarFoto = !!fotoUrl && error !== fotoUrl;
 
-  if (fotoUrl && !error) {
-    return (
-      <img
-        src={fotoUrl}
-        alt={nombre}
-        onError={() => setError(true)}
-        style={{ height: size, width: size }}
-        className={cn("rounded-full object-cover shrink-0 bg-brand-green/15", className)}
-      />
-    );
-  }
   return (
     <div
       style={{ height: size, width: size, fontSize: Math.max(11, size * 0.4) }}
-      className={cn("rounded-full bg-brand-green/15 text-brand-green flex items-center justify-center font-bold shrink-0", className)}
+      className={cn("relative rounded-full bg-brand-green/15 text-brand-green flex items-center justify-center font-bold shrink-0 overflow-hidden", className)}
     >
-      {inicial}
+      {(!mostrarFoto || cargada !== fotoUrl) && <span aria-hidden>{inicial}</span>}
+      {mostrarFoto && (
+        <img
+          src={fotoUrl!}
+          alt={nombre}
+          width={size}
+          height={size}
+          loading="lazy"
+          decoding="async"
+          onLoad={() => setCargada(fotoUrl!)}
+          onError={() => setError(fotoUrl!)}
+          className={cn(
+            "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
+            cargada === fotoUrl ? "opacity-100" : "opacity-0"
+          )}
+        />
+      )}
     </div>
   );
 }
