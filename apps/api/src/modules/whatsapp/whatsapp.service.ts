@@ -318,6 +318,8 @@ export async function obtenerConversacion(id: string) {
   const conversacion = await repo.getConversacion(id);
   if (!conversacion) return null;
   if (fotoNecesitaRefresco(conversacion)) notifyPedirFoto(id).catch(() => {});
+  // Para recibir "escribiendo…"/"en línea" WhatsApp exige suscribirse al chat.
+  if (!conversacion.wa_jid.endsWith("@g.us")) pedirAccion({ tipo: "suscribir_presencia", conversacion_id: id }).catch(() => {});
   const tags = await repo.tagsDeConversacion(id);
   return { ...conversacion, tags };
 }
@@ -370,6 +372,77 @@ export async function marcarLeida(conversacionId: string, userId: string | null)
   }
 }
 
+// ---- Acciones sobre mensajes (reaccionar, eliminar para todos, editar) ----
+
+async function pedirAccion(payload: Record<string, unknown>): Promise<void> {
+  await query("SELECT pg_notify('whatsapp_accion', $1)", [JSON.stringify(payload)]);
+}
+
+async function mensajeConWaId(mensajeId: string) {
+  const m = await repo.getMensaje(mensajeId);
+  if (!m) throw new Error("Mensaje no encontrado");
+  if (!m.wa_message_id) throw new Error("Ese mensaje todavía no llegó a WhatsApp");
+  return m;
+}
+
+const VENTANA_ELIMINAR_MS = 48 * 60 * 60 * 1000;
+const VENTANA_EDITAR_MS = 15 * 60 * 1000;
+
+/** Reacción propia (emoji vacío = quitarla). Se refleja al instante y se manda a WhatsApp. */
+export async function reaccionar(mensajeId: string, emoji: string) {
+  const m = await mensajeConWaId(mensajeId);
+  const actualizado = await repo.aplicarReaccion(m.id, "yo", emoji);
+  const conv = await repo.getConversacion(m.conversacion_id);
+  if (conv && actualizado) await notifyEvento({ tipo: "mensaje_actualizado", conexion_id: conv.conexion_id, conversacion_id: m.conversacion_id, mensaje: actualizado });
+  await pedirAccion({ tipo: "reaccion", conversacion_id: m.conversacion_id, mensaje_id: m.id, emoji });
+  return actualizado;
+}
+
+/** Eliminar para todos: solo mensajes propios y dentro de las 48 h (WhatsApp no deja después). */
+export async function eliminarParaTodos(mensajeId: string) {
+  const m = await mensajeConWaId(mensajeId);
+  if (m.direccion !== "saliente") throw new Error("Solo puedes eliminar mensajes enviados por ti");
+  if (Date.now() - new Date(m.created_at).getTime() > VENTANA_ELIMINAR_MS) throw new Error("WhatsApp solo deja eliminar para todos durante las primeras 48 horas");
+  const actualizado = await repo.marcarEliminado(m.id);
+  const conv = await repo.getConversacion(m.conversacion_id);
+  if (conv && actualizado) await notifyEvento({ tipo: "mensaje_actualizado", conexion_id: conv.conexion_id, conversacion_id: m.conversacion_id, mensaje: actualizado });
+  await pedirAccion({ tipo: "eliminar", conversacion_id: m.conversacion_id, mensaje_id: m.id });
+  return actualizado;
+}
+
+/** Editar un texto propio: solo dentro de los 15 minutos (el límite de WhatsApp). */
+export async function editarMensaje(mensajeId: string, contenido: string) {
+  const m = await mensajeConWaId(mensajeId);
+  if (m.direccion !== "saliente" || m.tipo !== "texto") throw new Error("Solo puedes editar mensajes de texto enviados por ti");
+  if (m.eliminado_at) throw new Error("Ese mensaje fue eliminado");
+  if (Date.now() - new Date(m.created_at).getTime() > VENTANA_EDITAR_MS) throw new Error("WhatsApp solo deja editar durante los primeros 15 minutos");
+  const actualizado = await repo.editarContenido(m.id, contenido);
+  const conv = await repo.getConversacion(m.conversacion_id);
+  if (conv && actualizado) await notifyEvento({ tipo: "mensaje_actualizado", conexion_id: conv.conexion_id, conversacion_id: m.conversacion_id, mensaje: actualizado });
+  await pedirAccion({ tipo: "editar", conversacion_id: m.conversacion_id, mensaje_id: m.id, contenido });
+  return actualizado;
+}
+
+/** "Escribiendo…" hacia el contacto mientras alguien del equipo escribe en el CRM. */
+export async function marcarEscribiendo(conversacionId: string, estado: "composing" | "recording" | "paused") {
+  await pedirAccion({ tipo: "presencia", conversacion_id: conversacionId, estado });
+}
+
+/** Presencia del contacto (llega del worker) → evento en vivo, sin tocar la base. */
+export async function registrarPresencia(conexionId: string, jid: string, estado: string, participante: string | null): Promise<void> {
+  const conv = await repo.getConversacionPorJid(conexionId, jid);
+  if (!conv) return;
+  await notifyEvento({ tipo: "presencia", conexion_id: conexionId, conversacion_id: conv.id, estado, participante });
+}
+
+export async function fijar(conversacionId: string, fijada: boolean) {
+  await repo.setFijada(conversacionId, fijada);
+}
+
+export async function buscarMensajes(conversacionId: string, q: string) {
+  return repo.buscarMensajes(conversacionId, q);
+}
+
 export async function cambiarEtapa(conversacionId: string, etapaId: string) {
   return repo.setEtapa(conversacionId, etapaId);
 }
@@ -418,10 +491,17 @@ export async function abrirConversacionConContacto(contactoId: string, conexionI
 export async function enviarMensaje(
   conversacionId: string,
   userId: string,
-  d: { tipo: string; contenido?: string | null; archivoUrl?: string | null; archivoNombre?: string | null; archivoTamanio?: number | null }
+  d: { tipo: string; contenido?: string | null; archivoUrl?: string | null; archivoNombre?: string | null; archivoTamanio?: number | null; respuestaA?: string | null }
 ) {
   const conversacion = await repo.getConversacion(conversacionId);
   if (!conversacion) throw new Error("Conversación no encontrada");
+  // Responder citando: se guarda el id del citado y un extracto para mostrarlo.
+  let respuestaPreview: string | null = null;
+  if (d.respuestaA) {
+    const citado = await repo.getMensajeDeChat(conversacion.conexion_id, conversacion.wa_jid, d.respuestaA);
+    if (!citado) throw new Error("El mensaje citado no existe en esta conversación");
+    respuestaPreview = previewDe(citado.tipo, citado.contenido, { archivoNombre: citado.archivo_nombre }).slice(0, 160);
+  }
 
   const mensaje = await repo.insertMensaje({
     conversacionId,
@@ -433,6 +513,8 @@ export async function enviarMensaje(
     archivoTamanio: d.archivoTamanio ?? null,
     enviadoPor: userId,
     estadoEntrega: "pendiente",
+    respuestaA: d.respuestaA ?? null,
+    respuestaPreview,
   });
   if (!mensaje) throw new Error("No se pudo registrar el mensaje");
 

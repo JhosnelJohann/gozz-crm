@@ -30,6 +30,8 @@ import type {
   WhatsAppMensajeModificado,
   WhatsAppChatInfo,
   WhatsAppMediaDescargada,
+  WhatsAppAccion,
+  WhatsAppPresencia,
 } from "./whatsapp-provider.interface.js";
 
 /** Chats que nunca se muestran: estados (historias, Parte 4) y canales. */
@@ -79,6 +81,7 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
   private stateCbs: ((conexionId: string, update: WhatsAppConnectionUpdate) => void)[] = [];
   private msgCbs: ((conexionId: string, msg: WhatsAppIncomingMessage) => void | Promise<void>)[] = [];
   private modCbs: ((conexionId: string, mod: WhatsAppMensajeModificado) => void)[] = [];
+  private presCbs: ((conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null) => void)[] = [];
   private chatCbs: ((conexionId: string, chats: WhatsAppChatInfo[], opts: { historial: boolean }) => void | Promise<void>)[] = [];
   /** Nombre (asunto) de cada grupo, para no pedirlo a WhatsApp en cada mensaje. */
   private gruposCache = new Map<string, { nombre: string | null; at: number }>();
@@ -228,6 +231,16 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
         console.log(`[baileys ${conexionId}] historial importado: ${infos.length} chats, ${ordenados.length} mensajes`);
       } catch (e: any) {
         console.error(`[baileys ${conexionId}] error importando historial:`, e?.message);
+      }
+    });
+
+    // "Escribiendo…" / "grabando audio…" / "en línea" (solo llega para los chats a los que se
+    // suscribió la conexión: se hace al abrir la conversación en el CRM, ver `accion`).
+    sock.ev.on("presence.update", ({ id, presences }: any) => {
+      for (const [quien, p] of Object.entries<any>(presences || {})) {
+        const estado = p?.lastKnownPresence as WhatsAppPresencia | undefined;
+        if (!estado) continue;
+        this.presCbs.forEach((cb) => cb(conexionId, id, estado, id.endsWith("@g.us") ? quien : null));
       }
     });
 
@@ -499,11 +512,34 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
       throw new Error("Mensaje sin contenido ni archivo");
     }
 
-    const sent = await sock.sendMessage(msg.jid, content, msg.waMessageId ? { messageId: msg.waMessageId } : undefined);
+    const opciones: any = {};
+    if (msg.waMessageId) opciones.messageId = msg.waMessageId;
+    if (msg.citado) {
+      // Responder citando: WhatsApp solo necesita la clave del citado y un extracto de su texto.
+      opciones.quoted = {
+        key: { remoteJid: msg.jid, id: msg.citado.id, fromMe: msg.citado.fromMe, participant: msg.citado.participant || undefined },
+        message: { conversation: msg.citado.texto || "" },
+      };
+    }
+    const sent = await sock.sendMessage(msg.jid, content, opciones);
     if (!sent?.key?.id) throw new Error("WhatsApp no confirmó el envío");
     return { waMessageId: sent.key.id };
   }
 
+  async accion(conexionId: string, a: WhatsAppAccion): Promise<void> {
+    const sock = this.sockets.get(conexionId);
+    if (!sock) throw new Error("La conexión de WhatsApp no está activa");
+    const key = (c: { id: string; fromMe: boolean; participant?: string | null }) => ({ remoteJid: a.jid, id: c.id, fromMe: c.fromMe, participant: c.participant || undefined });
+    switch (a.tipo) {
+      case "reaccion": await sock.sendMessage(a.jid, { react: { text: a.emoji, key: key(a.clave) } }); break;
+      case "eliminar": await sock.sendMessage(a.jid, { delete: key(a.clave) }); break;
+      case "editar": await sock.sendMessage(a.jid, { text: a.contenido, edit: key(a.clave) } as any); break;
+      case "presencia": await sock.sendPresenceUpdate(a.estado, a.jid); break;
+      case "suscribir_presencia": await sock.presenceSubscribe(a.jid); break;
+    }
+  }
+
+  onPresencia(cb: (conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null) => void): void { this.presCbs.push(cb); }
   onQr(cb: (conexionId: string, qr: string) => void): void { this.qrCbs.push(cb); }
   onConnectionUpdate(cb: (conexionId: string, update: WhatsAppConnectionUpdate) => void): void { this.stateCbs.push(cb); }
   onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void | Promise<void>): void { this.msgCbs.push(cb); }

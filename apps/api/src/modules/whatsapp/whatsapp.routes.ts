@@ -14,6 +14,10 @@ import {
   ActualizarEtapaSchema,
   AsignarConversacionSchema,
   VincularContactoSchema,
+  ReaccionSchema,
+  EditarMensajeSchema,
+  FijarSchema,
+  EscribiendoSchema,
 } from "./whatsapp.schemas.js";
 
 async function requireAccesoConexion(req: Request, res: Response, conexionId: string): Promise<boolean> {
@@ -47,6 +51,34 @@ export function registerWhatsAppRoutes(app: Express, upload: Multer) {
   app.get("/api/whatsapp/mensajes/:id", requireAuth, async (req, res) => {
     const mensaje = await resolverMensajeConAcceso(req, res, String(req.params.id));
     if (mensaje) res.json({ mensaje });
+  });
+
+  // ---- Acciones sobre un mensaje (como en WhatsApp) ----
+  const responderError = (res: Response, e: any) => {
+    const msg = e?.message || "No se pudo completar la acción";
+    res.status(/no encontrad/i.test(msg) ? 404 : 400).json({ error: msg });
+  };
+
+  app.post("/api/whatsapp/mensajes/:id/reaccion", requireAuth, async (req, res) => {
+    const mensaje = await resolverMensajeConAcceso(req, res, String(req.params.id));
+    if (!mensaje) return;
+    const parsed = ReaccionSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
+    try { res.json({ mensaje: await service.reaccionar(mensaje.id, parsed.data.emoji) }); } catch (e) { responderError(res, e); }
+  });
+
+  app.post("/api/whatsapp/mensajes/:id/eliminar", requireAuth, async (req, res) => {
+    const mensaje = await resolverMensajeConAcceso(req, res, String(req.params.id));
+    if (!mensaje) return;
+    try { res.json({ mensaje: await service.eliminarParaTodos(mensaje.id) }); } catch (e) { responderError(res, e); }
+  });
+
+  app.patch("/api/whatsapp/mensajes/:id", requireAuth, async (req, res) => {
+    const mensaje = await resolverMensajeConAcceso(req, res, String(req.params.id));
+    if (!mensaje) return;
+    const parsed = EditarMensajeSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
+    try { res.json({ mensaje: await service.editarMensaje(mensaje.id, parsed.data.contenido) }); } catch (e) { responderError(res, e); }
   });
 
   // Media que se guardó sin archivo (historial importado, o una descarga en vivo que falló): el
@@ -196,8 +228,12 @@ export function registerWhatsAppRoutes(app: Express, upload: Multer) {
         d = { ...d, archivoUrl: await placeUploadedFile(flat, "whatsapp_mensaje", { conversacionId: id }, fname) };
       }
     }
-    const mensaje = await service.enviarMensaje(id, u.sub, d);
-    res.json({ mensaje });
+    try {
+      const mensaje = await service.enviarMensaje(id, u.sub, d);
+      res.json({ mensaje });
+    } catch (e: any) {
+      res.status(400).json({ error: e?.message || "No se pudo enviar el mensaje" });
+    }
   });
 
   app.post("/api/whatsapp/conversaciones/:id/leer", requireAuth, async (req, res) => {
@@ -222,6 +258,32 @@ export function registerWhatsAppRoutes(app: Express, upload: Multer) {
     const parsed = AsignarConversacionSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
     res.json({ conversacion: await service.asignar(id, parsed.data.asignado_a) });
+  });
+
+  app.post("/api/whatsapp/conversaciones/:id/escribiendo", requireAuth, async (req, res) => {
+    const id = String(req.params.id);
+    if (!(await resolverConversacionConAcceso(req, res, id))) return;
+    const parsed = EscribiendoSchema.safeParse(req.body || {});
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
+    await service.marcarEscribiendo(id, parsed.data.estado);
+    res.json({ ok: true });
+  });
+
+  app.patch("/api/whatsapp/conversaciones/:id/fijar", requireAuth, async (req, res) => {
+    const id = String(req.params.id);
+    if (!(await resolverConversacionConAcceso(req, res, id))) return;
+    const parsed = FijarSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
+    await service.fijar(id, parsed.data.fijada);
+    res.json({ ok: true });
+  });
+
+  app.get("/api/whatsapp/conversaciones/:id/buscar", requireAuth, async (req, res) => {
+    const id = String(req.params.id);
+    if (!(await resolverConversacionConAcceso(req, res, id))) return;
+    const q = String(req.query.q || "").trim();
+    if (q.length < 2) { res.json({ mensajes: [] }); return; }
+    res.json({ mensajes: await service.buscarMensajes(id, q.slice(0, 100)) });
   });
 
   app.patch("/api/whatsapp/conversaciones/:id/archivar", requireAuth, async (req, res) => {

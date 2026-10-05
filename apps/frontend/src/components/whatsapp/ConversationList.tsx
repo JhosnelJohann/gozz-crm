@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { Search, Tag as TagIcon, CaretDown, Check, UserCircle, Users2 } from "@/lib/bootstrap-icons";
+import { Search, Tag as TagIcon, CaretDown, Check, UserCircle, Users2, Pin, PinOff, Archive, ArrowLeft, ChevronDown } from "@/lib/bootstrap-icons";
 import { WhatsappLogo } from "@/lib/bootstrap-icons";
 import { WhatsAppAvatar } from "./WhatsAppAvatar";
 import { nombreVisible } from "@/lib/whatsapp-numero";
@@ -17,6 +17,7 @@ export interface ConversacionItem {
   telefono_real?: string | null;
   es_grupo?: boolean;
   archivado?: boolean;
+  fijada?: boolean;
   contacto_id: string | null;
   etapa_id: string | null;
   asignado_a: string | null;
@@ -44,6 +45,10 @@ interface Props {
   onBusquedaChange: (q: string) => void;
   onSelect: (c: ConversacionItem) => void;
   loading: boolean;
+  verArchivados?: boolean;
+  onToggleArchivados?: () => void;
+  onFijar?: (c: ConversacionItem, fijada: boolean) => void;
+  onArchivar?: (c: ConversacionItem, archivado: boolean) => void;
 }
 
 /**
@@ -133,7 +138,11 @@ function friendlyDate(iso: string | null): string {
 export function ConversationList({
   conversaciones, etapas, tags, selectedId, etapaFiltro, onEtapaFiltroChange, tagFiltro, onTagFiltroChange,
   soloAsignadasAMi, onToggleSoloAsignadasAMi, busqueda, onBusquedaChange, onSelect, loading,
+  verArchivados, onToggleArchivados, onFijar, onArchivar,
 }: Props) {
+  // Menú de una conversación (fijar / archivar): botón al pasar el mouse o clic derecho.
+  const [menu, setMenu] = useState<{ c: ConversacionItem; x: number; y: number } | null>(null);
+  const abrirMenu = (c: ConversacionItem, x: number, y: number) => setMenu({ c, x: Math.min(x, window.innerWidth - 220), y: Math.min(y, window.innerHeight - 120) });
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="shrink-0 px-3 pt-2.5 pb-2 border-b border-black/5 dark:border-white/10">
@@ -190,6 +199,17 @@ export function ConversationList({
         <div className="pointer-events-none absolute right-0 top-0 bottom-[1px] w-8 bg-gradient-to-l from-bg-canvas dark:from-[#0B0F16] to-transparent" />
       </div>
 
+      {onToggleArchivados && (
+        <button
+          type="button"
+          onClick={onToggleArchivados}
+          className="shrink-0 flex items-center gap-3 px-4 py-2.5 text-left text-[13px] font-semibold border-b border-black/5 dark:border-white/10 hover:bg-black/[0.02] dark:hover:bg-white/[0.03] transition"
+        >
+          {verArchivados ? <ArrowLeft className="h-4 w-4 text-brand-primary" /> : <Archive className="h-4 w-4 text-neutral-500" />}
+          <span className="flex-1">{verArchivados ? "Volver a la bandeja" : "Archivados"}</span>
+          {verArchivados && <span className="text-[11px] text-neutral-400 font-normal">Conversaciones archivadas</span>}
+        </button>
+      )}
       <div className="flex-1 overflow-y-auto" data-lenis-prevent>
         {loading || conversaciones === null ? (
           <div className="p-4 space-y-3">
@@ -226,13 +246,14 @@ export function ConversationList({
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: Math.min(i, 12) * 0.02, layout: { type: "spring", stiffness: 420, damping: 36 } }}
                   onClick={() => onSelect(c)}
+                  onContextMenu={(e) => { if (!onFijar && !onArchivar) return; e.preventDefault(); abrirMenu(c, e.clientX, e.clientY); }}
                   onPointerMove={(e) => {
                     const r = e.currentTarget.getBoundingClientRect();
                     e.currentTarget.style.setProperty("--mx", `${e.clientX - r.left}px`);
                     e.currentTarget.style.setProperty("--my", `${e.clientY - r.top}px`);
                   }}
                   className={cn(
-                    "wa-row w-full flex items-start gap-3 px-3 py-3 text-left transition-colors relative border-b border-black/[0.03] dark:border-white/[0.03]",
+                    "wa-row group w-full flex items-start gap-3 px-3 py-3 text-left transition-colors relative border-b border-black/[0.03] dark:border-white/[0.03]",
                     active ? "bg-brand-primary/8 dark:bg-white/[0.06]" : "hover:bg-black/[0.015] dark:hover:bg-white/[0.02]"
                   )}
                 >
@@ -257,7 +278,20 @@ export function ConversationList({
                       <div className={cn("text-[13px] truncate flex-1", c.no_leidos_count > 0 ? "font-bold" : "font-medium text-neutral-700 dark:text-neutral-300")}>
                         {nombreVisible(c)}
                       </div>
+                      {c.fijada && <span title="Fijada" className="text-neutral-400 shrink-0"><Pin className="h-3 w-3" /></span>}
                       <div className={cn("text-[10px] shrink-0 tabular-nums", c.no_leidos_count > 0 ? "text-[#ff4d7e] font-bold" : "text-neutral-400")}>{friendlyDate(c.ultimo_mensaje_at)}</div>
+                      {(onFijar || onArchivar) && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label="Opciones de la conversación"
+                          onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); abrirMenu(c, r.left - 180, r.bottom + 4); }}
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); abrirMenu(c, r.left - 180, r.bottom + 4); } }}
+                          className="h-5 w-5 -mr-1 rounded-full flex items-center justify-center text-neutral-400 hover:text-brand-primary hover:bg-black/5 dark:hover:bg-white/10 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <div className="text-[11.5px] text-neutral-500 truncate flex-1">
@@ -289,6 +323,24 @@ export function ConversationList({
           </AnimatePresence>
         )}
       </div>
+      {menu && typeof document !== "undefined" && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} />
+          <div style={{ position: "fixed", top: menu.y, left: Math.max(8, menu.x) }} className="z-50 w-52 rounded-xl glass-panel py-1 wa-menu-in" role="menu">
+            {onFijar && (
+              <button role="menuitem" onClick={() => { onFijar(menu.c, !menu.c.fijada); setMenu(null); }} className="w-full text-left px-3 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-2">
+                {menu.c.fijada ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />} {menu.c.fijada ? "Desfijar" : "Fijar arriba"}
+              </button>
+            )}
+            {onArchivar && (
+              <button role="menuitem" onClick={() => { onArchivar(menu.c, !menu.c.archivado); setMenu(null); }} className="w-full text-left px-3 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-2">
+                <Archive className="h-3.5 w-3.5" /> {menu.c.archivado ? "Desarchivar" : "Archivar"}
+              </button>
+            )}
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   );
 }

@@ -243,7 +243,14 @@ export async function listConversaciones(conexionId: string, filtros: FiltrosCon
   if (filtros.asignadoId) { params.push(filtros.asignadoId); cond.push(`c.asignado_a = $${params.length}`); }
   if (filtros.archivado !== undefined) { params.push(filtros.archivado); cond.push(`c.archivado = $${params.length}`); }
   else { cond.push("c.archivado = false"); }
-  if (filtros.q) { params.push(`%${filtros.q}%`); cond.push(`(c.nombre_whatsapp ILIKE $${params.length} OR c.wa_jid ILIKE $${params.length})`); }
+  if (filtros.q) {
+    // Como WhatsApp: por nombre, por número (también el real detrás de un @lid) o por el texto de
+    // algún mensaje.
+    params.push(`%${filtros.q}%`);
+    const p = `$${params.length}`;
+    cond.push(`(c.nombre_whatsapp ILIKE ${p} OR c.wa_jid ILIKE ${p} OR c.telefono_real ILIKE ${p}
+      OR EXISTS (SELECT 1 FROM gozz.whatsapp_mensajes mq WHERE mq.conversacion_id = c.id AND mq.contenido ILIKE ${p}))`);
+  }
   if (filtros.tagId) {
     params.push(filtros.tagId);
     cond.push(`EXISTS (SELECT 1 FROM gozz.whatsapp_conversacion_tags ct2 WHERE ct2.conversacion_id = c.id AND ct2.tag_id = $${params.length})`);
@@ -262,7 +269,7 @@ export async function listConversaciones(conexionId: string, filtros: FiltrosCon
      FROM gozz.whatsapp_conversaciones c
      LEFT JOIN gozz.users ua ON ua.id = c.asignado_a
      WHERE ${cond.join(" AND ")}
-     ORDER BY c.ultimo_mensaje_at DESC NULLS LAST, c.created_at DESC`,
+     ORDER BY c.fijada DESC, c.ultimo_mensaje_at DESC NULLS LAST, c.created_at DESC`,
     params
   );
 }
@@ -378,6 +385,20 @@ export async function setAsignado(conversacionId: string, userId: string | null)
     [conversacionId, userId]
   );
   return rows[0];
+}
+
+export async function setFijada(conversacionId: string, fijada: boolean): Promise<void> {
+  await query("UPDATE gozz.whatsapp_conversaciones SET fijada = $2, updated_at = NOW() WHERE id = $1", [conversacionId, fijada]);
+}
+
+/** Buscar dentro de una conversación (texto, pie de foto, nombre de archivo). */
+export async function buscarMensajes(conversacionId: string, q: string, limit = 50): Promise<WhatsAppMensaje[]> {
+  return query<WhatsAppMensaje>(
+    `SELECT ${MSG_COLS} FROM gozz.whatsapp_mensajes
+      WHERE conversacion_id = $1 AND (contenido ILIKE $2 OR archivo_nombre ILIKE $2)
+      ORDER BY created_at DESC LIMIT $3`,
+    [conversacionId, `%${q}%`, limit]
+  );
 }
 
 export async function setArchivado(conversacionId: string, archivado: boolean): Promise<void> {

@@ -30,9 +30,35 @@ provider.onMessageStatusUpdate((_conexionId, waMessageId, estado) => {
   if (estado !== "entregado" && estado !== "leido") return;
   service.registrarActualizacionEntrega(waMessageId, estado).catch((e) => console.error(`[whatsapp-cm] registrarActualizacionEntrega(${waMessageId}):`, e?.message));
 });
+provider.onPresencia((conexionId, jid, estado, participante) => {
+  service.registrarPresencia(conexionId, jid, estado, participante).catch(() => {});
+});
 provider.onContactoResuelto((conexionId, jid, info) => {
   service.registrarContactoResuelto(conexionId, jid, info).catch((e) => console.error(`[whatsapp-cm] registrarContactoResuelto(${jid}):`, e?.message));
 });
+
+/** Acciones pedidas desde el CRM (reaccionar, eliminar, editar, "escribiendo…", presencia). */
+export async function ejecutarAccion(p: { tipo: string; conversacion_id: string; mensaje_id?: string; emoji?: string; contenido?: string; estado?: string }): Promise<void> {
+  const conversacion = await repo.getConversacion(p.conversacion_id);
+  if (!conversacion) return;
+  const jid = conversacion.wa_jid;
+  let clave: { id: string; fromMe: boolean; participant: string | null } | null = null;
+  if (p.mensaje_id) {
+    const m = await repo.getMensaje(p.mensaje_id);
+    if (!m?.wa_message_id) return;
+    clave = { id: m.wa_message_id, fromMe: m.direccion === "saliente", participant: m.autor_jid ?? null };
+  }
+  try {
+    if (p.tipo === "reaccion" && clave) await provider.accion(conversacion.conexion_id, { tipo: "reaccion", jid, clave, emoji: p.emoji || "" });
+    else if (p.tipo === "eliminar" && clave) await provider.accion(conversacion.conexion_id, { tipo: "eliminar", jid, clave });
+    else if (p.tipo === "editar" && clave && p.contenido) await provider.accion(conversacion.conexion_id, { tipo: "editar", jid, clave, contenido: p.contenido });
+    else if (p.tipo === "presencia") await provider.accion(conversacion.conexion_id, { tipo: "presencia", jid, estado: (p.estado as any) || "composing" });
+    else if (p.tipo === "suscribir_presencia") await provider.accion(conversacion.conexion_id, { tipo: "suscribir_presencia", jid });
+  } catch (e: any) {
+    // La presencia es best-effort; un fallo de reacción/edición/eliminación se registra.
+    if (!p.tipo.includes("presencia")) console.error(`[whatsapp-cm] acción ${p.tipo} falló:`, e?.message);
+  }
+}
 
 /** Baja la media de un mensaje guardado sin archivo (historial o descarga fallida), al pedirla. */
 export async function descargarMediaMensaje(mensajeId: string): Promise<void> {
@@ -83,6 +109,12 @@ export async function enviarMensajePendiente(mensajeId: string): Promise<void> {
       waId = provider.generarIdMensaje(conversacion.conexion_id);
       waId = await service.reservarIdEnvio(mensajeId, waId);
     }
+    // Responder citando: se busca el mensaje citado para pasarle a WhatsApp su clave y su texto.
+    let citado = null;
+    if (mensaje.respuesta_a) {
+      const q = await repo.getMensajeDeChat(conversacion.conexion_id, conversacion.wa_jid, mensaje.respuesta_a);
+      citado = { id: mensaje.respuesta_a, fromMe: q?.direccion === "saliente", participant: q?.autor_jid ?? null, texto: q?.contenido || mensaje.respuesta_preview || "" };
+    }
     const { waMessageId } = await provider.sendMessage(conversacion.conexion_id, {
       jid: conversacion.wa_jid,
       tipo: mensaje.tipo,
@@ -90,6 +122,7 @@ export async function enviarMensajePendiente(mensajeId: string): Promise<void> {
       archivoUrl: mensaje.archivo_url,
       archivoNombre: mensaje.archivo_nombre,
       waMessageId: waId,
+      citado,
     });
     await service.registrarConfirmacionEnvio(mensajeId, waMessageId);
   } catch (e: any) {

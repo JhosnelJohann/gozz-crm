@@ -12,7 +12,22 @@ export interface WhatsAppOutgoingMessage {
   archivoNombre?: string | null;
   /** Id de WhatsApp YA asignado (y guardado en BD) antes de enviar — ver `generarIdMensaje`. */
   waMessageId?: string | null;
+  /** Responder citando otro mensaje. */
+  citado?: { id: string; fromMe: boolean; participant?: string | null; texto: string } | null;
 }
+
+/** Clave de un mensaje ya enviado/recibido, para reaccionar, eliminar o editar. */
+export interface WhatsAppClaveMensaje { id: string; fromMe: boolean; participant?: string | null }
+
+/** Acciones sobre WhatsApp que no son "enviar un mensaje nuevo". */
+export type WhatsAppAccion =
+  | { tipo: "reaccion"; jid: string; clave: WhatsAppClaveMensaje; emoji: string }
+  | { tipo: "eliminar"; jid: string; clave: WhatsAppClaveMensaje }
+  | { tipo: "editar"; jid: string; clave: WhatsAppClaveMensaje; contenido: string }
+  | { tipo: "presencia"; jid: string; estado: "composing" | "recording" | "paused" }
+  | { tipo: "suscribir_presencia"; jid: string };
+
+export type WhatsAppPresencia = "composing" | "recording" | "paused" | "available" | "unavailable";
 
 export interface WhatsAppIncomingMessage {
   jid: string;
@@ -94,6 +109,10 @@ export interface WhatsAppProvider {
   onChats(cb: (conexionId: string, chats: WhatsAppChatInfo[], opts: { historial: boolean }) => void | Promise<void>): void;
   /** Baja la media de un mensaje que se guardó sin archivo (historial o descarga fallida). */
   descargarMedia(conexionId: string, mediaMeta: string): Promise<WhatsAppMediaDescargada>;
+  /** Reaccionar, eliminar para todos, editar, "escribiendo…" y suscribirse a la presencia. */
+  accion(conexionId: string, a: WhatsAppAccion): Promise<void>;
+  /** "Escribiendo…", "grabando audio…", "en línea" del contacto (o de un participante en grupos). */
+  onPresencia(cb: (conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null) => void): void;
   /** Confirmaciones de entrega/lectura de WhatsApp para un mensaje YA enviado, identificado por su
    * `waMessageId` — la única forma de que el doble-check gris y el azul de "leído" avancen. */
   onMessageStatusUpdate(cb: (conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void): void;

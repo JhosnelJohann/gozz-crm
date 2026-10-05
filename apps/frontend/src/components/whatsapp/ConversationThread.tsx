@@ -1,10 +1,10 @@
 "use client";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, CaretDown, Tag as TagIcon, Check, Plus, Users2 } from "@/lib/bootstrap-icons";
-import { MessageBubble } from "./MessageBubble";
-import { ConversationComposer } from "./ConversationComposer";
+import { ArrowLeft, CaretDown, Tag as TagIcon, Check, Plus, Users2, Search, X } from "@/lib/bootstrap-icons";
+import { MessageBubble, WaTicks } from "./MessageBubble";
+import { ConversationComposer, type ModoComposer } from "./ConversationComposer";
 import { WhatsAppAvatar } from "./WhatsAppAvatar";
 import { AsignadoPicker, type UsuarioAsignable } from "./AsignadoPicker";
 import { formatearNumeroWhatsApp, nombreVisible } from "@/lib/whatsapp-numero";
@@ -33,6 +33,93 @@ function etiquetaDia(iso: string): string {
 
 /** Cinta del embudo: todas las etapas a la vista, con una píldora "líquida" que se desliza a la
  * etapa actual. Tocar una etapa mueve la conversación (como arrastrarla en el tablero). */
+/** Varias fotos seguidas del mismo autor (en menos de 2 min y sin texto) se muestran juntas en
+ * una cuadrícula, como los álbumes de WhatsApp. */
+type ItemHilo = { k: "msg"; m: WhatsAppMensaje } | { k: "album"; ms: WhatsAppMensaje[] };
+function agrupar(mensajes: WhatsAppMensaje[]): ItemHilo[] {
+  const out: ItemHilo[] = [];
+  const esFoto = (m: WhatsAppMensaje) => m.tipo === "imagen" && !!m.archivo_url && !m.contenido && !m.eliminado_at && !m.respuesta_a && !Object.keys(m.reacciones || {}).length;
+  for (const m of mensajes) {
+    const prev = out[out.length - 1];
+    const ultimo = prev ? (prev.k === "album" ? prev.ms[prev.ms.length - 1] : prev.m) : null;
+    const junta = ultimo && esFoto(m) && esFoto(ultimo) && ultimo.direccion === m.direccion && (ultimo.autor_jid || "") === (m.autor_jid || "")
+      && new Date(m.created_at).getTime() - new Date(ultimo.created_at).getTime() < 120_000;
+    if (junta && prev) {
+      if (prev.k === "album") prev.ms.push(m);
+      else out[out.length - 1] = { k: "album", ms: [prev.m, m] };
+    } else out.push({ k: "msg", m });
+  }
+  return out;
+}
+
+function Album({ ms, esGrupo }: { ms: WhatsAppMensaje[]; esGrupo: boolean }) {
+  const isMe = ms[0].direccion === "saliente";
+  const ultimo = ms[ms.length - 1];
+  const visibles = ms.slice(0, 4);
+  return (
+    <div className={cn("flex", isMe ? "justify-end" : "justify-start")} data-msg-id={ultimo.id}>
+      <div className={cn("rounded-2xl p-1 max-w-[78%] sm:max-w-[340px]", isMe ? "wa-out rounded-br-sm" : "glass-light rounded-bl-sm shadow-sm")}>
+        {esGrupo && !isMe && ms[0].autor_nombre && <div className="text-[12px] font-semibold px-2 pt-1 pb-0.5">{ms[0].autor_nombre}</div>}
+        <div className="grid grid-cols-2 gap-1">
+          {visibles.map((m, i) => (
+            <a key={m.id} href={m.archivo_url!} target="_blank" rel="noreferrer" data-msg-id={m.id} className="relative block aspect-square overflow-hidden rounded-xl">
+              <img src={m.archivo_url!} alt="Foto" loading="lazy" decoding="async" className="h-full w-full object-cover wa-img-in" />
+              {i === 3 && ms.length > 4 && (
+                <span className="absolute inset-0 bg-black/55 text-white text-2xl font-bold flex items-center justify-center">+{ms.length - 4}</span>
+              )}
+            </a>
+          ))}
+        </div>
+        <div className={cn("flex items-center justify-end gap-1 px-1.5 pt-1 text-[10px]", isMe ? "text-white/75" : "text-neutral-400")}>
+          {ms.length} fotos · {new Date(ultimo.created_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}
+          {isMe && <WaTicks estado={ultimo.estado_entrega} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Buscar dentro del chat (en todo el historial guardado, no solo lo cargado en pantalla). */
+function BuscarEnChat({ conversacionId, onIr, onCerrar }: { conversacionId: string; onIr: (m: WhatsAppMensaje) => void; onCerrar: () => void }) {
+  const [q, setQ] = useState("");
+  const [res, setRes] = useState<WhatsAppMensaje[] | null>(null);
+  useEffect(() => {
+    if (q.trim().length < 2) { setRes(null); return; }
+    const t = setTimeout(async () => {
+      const r = await fetch(`/api/whatsapp/conversaciones/${conversacionId}/buscar?q=${encodeURIComponent(q.trim())}`).catch(() => null);
+      if (r?.ok) setRes((await r.json()).mensajes || []);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q, conversacionId]);
+  const resaltar = (t: string) => {
+    const i = t.toLowerCase().indexOf(q.trim().toLowerCase());
+    if (i < 0) return t.slice(0, 120);
+    const ini = Math.max(0, i - 30);
+    return <>{ini > 0 && "…"}{t.slice(ini, i)}<mark className="bg-brand-primary/25 text-inherit rounded px-0.5">{t.slice(i, i + q.trim().length)}</mark>{t.slice(i + q.trim().length, i + 90)}</>;
+  };
+  return (
+    <div className="relative shrink-0 px-3 py-2 border-b border-black/5 dark:border-white/10 wa-menu-in">
+      <div className="flex items-center gap-2 h-9 px-3 rounded-xl glass-input">
+        <Search className="h-4 w-4 text-neutral-400 shrink-0" />
+        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Escape" && onCerrar()} placeholder="Buscar en esta conversación…" className="flex-1 min-w-0 bg-transparent outline-none text-sm" />
+        {res && <span className="text-[11px] text-neutral-400 tabular-nums">{res.length}</span>}
+        <button type="button" onClick={onCerrar} aria-label="Cerrar búsqueda" className="h-6 w-6 rounded-full hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center text-neutral-500"><X className="h-3.5 w-3.5" /></button>
+      </div>
+      {res && (
+        <div className="absolute left-3 right-3 top-full mt-1 z-30 max-h-72 overflow-y-auto rounded-xl glass-panel py-1" data-lenis-prevent>
+          {res.length === 0 && <div className="px-3 py-3 text-xs text-neutral-500">Sin resultados para “{q}”.</div>}
+          {res.map((m) => (
+            <button key={m.id} type="button" onClick={() => onIr(m)} className="w-full text-left px-3 py-2 hover:bg-black/5 dark:hover:bg-white/5">
+              <div className="text-[10px] text-neutral-400">{new Date(m.created_at).toLocaleString("es", { dateStyle: "medium", timeStyle: "short" })} · {m.direccion === "saliente" ? "Tú" : m.autor_nombre || "Contacto"}</div>
+              <div className="text-xs truncate">{resaltar(m.contenido || m.archivo_nombre || "")}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StageRibbon({ etapas, valor, onChange }: { etapas: WhatsAppPipelineStage[]; valor: string | null; onChange: (id: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; width: number } | null>(null);
@@ -185,7 +272,7 @@ interface Props {
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
   onBack?: () => void;
-  onSend: (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number }) => Promise<void>;
+  onSend: (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number; respuestaA?: string }) => Promise<void>;
   onRetry?: (m: WhatsAppMensaje) => void;
   onCambiarEtapa: (etapaId: string) => void;
   onAsignar: (userId: string | null) => void;
@@ -193,20 +280,39 @@ interface Props {
   onCrearTag: (nombre: string, color: string) => Promise<void>;
   onAbrirPerfil: () => void;
   onDescargar?: (m: WhatsAppMensaje) => Promise<void>;
+  onReaccionar?: (m: WhatsAppMensaje, emoji: string) => void;
+  onEliminar?: (m: WhatsAppMensaje) => void;
+  onEditar?: (m: WhatsAppMensaje, contenido: string) => Promise<void>;
+  onEscribiendo?: () => void;
+  /** Presencia del contacto en vivo: "composing", "recording", "available"… */
+  presencia?: string | null;
+  /** Asegura que un mensaje (de la búsqueda) esté cargado, trayendo historial anterior si hace falta. */
+  onAsegurarMensaje?: (id: string) => Promise<boolean>;
 }
 
 export function ConversationThread({
   conversacion, mensajes, etapas, tags, usuarios, conectado, hasMore = false, loadingOlder = false, onLoadOlder,
   onBack, onSend, onRetry, onCambiarEtapa, onAsignar, onToggleTag, onCrearTag, onAbrirPerfil, onDescargar,
+  onReaccionar, onEliminar, onEditar, onEscribiendo, presencia, onAsegurarMensaje,
 }: Props) {
+  const [modo, setModo] = useState<ModoComposer>(null);
+  const [buscando, setBuscando] = useState(false);
+
+  const resaltarEl = (el: HTMLElement | null | undefined) => {
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.animate([{ background: "rgba(87,80,232,.22)" }, { background: "transparent" }], { duration: 1600, easing: "ease-out" });
+  };
+  const irAMensaje = async (m: WhatsAppMensaje) => {
+    const buscar = () => scrollRef.current?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(m.id)}"]`);
+    if (!buscar() && onAsegurarMensaje) await onAsegurarMensaje(m.id);
+    setTimeout(() => resaltarEl(buscar()), 60);
+  };
   const esGrupo = !!conversacion.es_grupo || conversacion.wa_jid.endsWith("@g.us");
 
   /** Tocar una cita lleva al mensaje original (si está cargado) y lo resalta un momento. */
   const irACita = (waId: string) => {
-    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-wa-id="${CSS.escape(waId)}"]`);
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.animate([{ background: "rgba(87,80,232,.22)" }, { background: "transparent" }], { duration: 1400, easing: "ease-out" });
+    resaltarEl(scrollRef.current?.querySelector<HTMLElement>(`[data-wa-id="${CSS.escape(waId)}"]`));
   };
   const scrollRef = useRef<HTMLDivElement>(null);
   // Ancla de scroll para el historial anterior (evita el "salto" al prepender mensajes viejos).
@@ -277,9 +383,17 @@ export function ConversationThread({
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold truncate">{nombreVisible(conversacion)}</div>
             <div className="text-[10px] text-neutral-500 truncate flex items-center gap-1">
-              {esGrupo ? <><Users2 className="h-3 w-3" /> Grupo de WhatsApp</> : numeroConBandera(conversacion.telefono_real || conversacion.wa_jid)}
+              {presencia === "composing" || presencia === "recording" ? (
+                <span className="text-emerald-500 font-semibold">{presencia === "recording" ? "grabando audio…" : "escribiendo…"}</span>
+              ) : esGrupo ? <><Users2 className="h-3 w-3" /> Grupo de WhatsApp</> : (
+                <>{presencia === "available" && <span className="text-emerald-500 font-semibold mr-1">en línea ·</span>}{numeroConBandera(conversacion.telefono_real || conversacion.wa_jid)}</>
+              )}
             </div>
           </div>
+        </button>
+        <button type="button" onClick={() => setBuscando((v) => !v)} title="Buscar en la conversación" aria-label="Buscar en la conversación"
+          className={cn("h-8 w-8 rounded-lg flex items-center justify-center shrink-0 transition", buscando ? "bg-brand-primary/12 text-brand-primary" : "text-neutral-500 hover:bg-black/5 dark:hover:bg-white/5")}>
+          <Search className="h-4 w-4" />
         </button>
         <AsignadoPicker usuarios={usuarios} valor={conversacion.asignado_a} onChange={onAsignar} />
         <TagPicker todas={tags} activas={conversacion.tags} onToggle={onToggleTag} onCrear={onCrearTag} />
@@ -287,6 +401,7 @@ export function ConversationThread({
       <div className="shrink-0 px-3 pt-2 pb-1.5 border-b border-black/5 dark:border-white/10">
         <StageRibbon etapas={etapas} valor={conversacion.etapa_id} onChange={onCambiarEtapa} />
       </div>
+      {buscando && <BuscarEnChat conversacionId={conversacion.id} onIr={irAMensaje} onCerrar={() => setBuscando(false)} />}
 
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-2 chat-bg" data-lenis-prevent>
         {loadingOlder && (
@@ -299,11 +414,26 @@ export function ConversationThread({
         ) : mensajes.length === 0 ? (
           <div className="h-full flex items-center justify-center text-xs text-neutral-400">Todavía no hay mensajes en esta conversación</div>
         ) : (
-          mensajes.map((m, i) => {
-            const dia = etiquetaDia(m.created_at);
-            const nuevoDia = i === 0 || etiquetaDia(mensajes[i - 1].created_at) !== dia;
+          agrupar(mensajes).map((it, i, items) => {
+            const primero = it.k === "album" ? it.ms[0] : it.m;
+            const anterior = i > 0 ? items[i - 1] : null;
+            const dia = etiquetaDia(primero.created_at);
+            const nuevoDia = !anterior || etiquetaDia((anterior.k === "album" ? anterior.ms[anterior.ms.length - 1] : anterior.m).created_at) !== dia;
+            if (it.k === "album") {
+              return (
+                <div key={it.ms[0].id}>
+                  {nuevoDia && (
+                    <div className="flex justify-center my-3">
+                      <span className="text-[11px] font-semibold capitalize px-3 py-1 rounded-full glass-light text-neutral-500 shadow-sm">{dia}</span>
+                    </div>
+                  )}
+                  <Album ms={it.ms} esGrupo={esGrupo} />
+                </div>
+              );
+            }
+            const m = it.m;
             return (
-              <div key={m.id}>
+              <div key={m.id} data-msg-id={m.id}>
                 {nuevoDia && (
                   <div className="flex justify-center my-3">
                     <span className="text-[11px] font-semibold capitalize px-3 py-1 rounded-full glass-light text-neutral-500 shadow-sm">{dia}</span>
@@ -315,6 +445,10 @@ export function ConversationThread({
                   onRetry={onRetry}
                   onDescargar={onDescargar}
                   onIrACita={irACita}
+                  onResponder={(x) => setModo({ tipo: "respuesta", m: x })}
+                  onReaccionar={onReaccionar}
+                  onEditar={(x) => setModo({ tipo: "edicion", m: x })}
+                  onEliminar={onEliminar}
                   // Un saliente real que reemplaza a su burbuja optimista (temp-) ya se animó al
                   // enviarse: no se vuelve a animar al reconciliarse con el id del servidor.
                   animar={!idsInicialesRef.current?.has(m.id) && (m.id.startsWith("temp-") || m.direccion === "entrante")}
@@ -325,7 +459,7 @@ export function ConversationThread({
         )}
       </div>
 
-      <ConversationComposer onSend={onSend} disabled={!conectado} />
+      <ConversationComposer onSend={onSend} disabled={!conectado} modo={modo} onCancelarModo={() => setModo(null)} onEditar={onEditar} onEscribiendo={onEscribiendo} />
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { getSocket } from "@/lib/socket";
 import { formatearNumeroWhatsApp } from "@/lib/whatsapp-numero";
 import { setWhatsappActive } from "@/lib/whatsappActive";
 import { celebrar } from "@/lib/celebracion";
+import { previewDe } from "@/lib/whatsapp-preview";
 import { WhatsappLogo, List, LayoutGrid } from "@/lib/bootstrap-icons";
 import { ConnectionSwitcher } from "@/components/whatsapp/ConnectionSwitcher";
 import { ConnectWhatsAppModal } from "@/components/whatsapp/ConnectWhatsAppModal";
@@ -37,23 +38,6 @@ function mergeMensajes(prev: WhatsAppMensaje[], incoming: WhatsAppMensaje[]): Wh
   );
 }
 
-function previewDe(msg: { contenido?: string | null; tipo: string; archivo_nombre?: string | null; autor_nombre?: string | null; direccion?: string; eliminado_at?: string | null }): string {
-  const json = <T,>(): T | null => { try { return msg.contenido ? JSON.parse(msg.contenido) : null; } catch { return null; } };
-  let base: string;
-  if (msg.eliminado_at) base = "🚫 Mensaje eliminado";
-  else if (msg.tipo === "texto" || msg.tipo === "sistema") base = msg.contenido || "";
-  else if (msg.tipo === "imagen") base = msg.contenido ? `📷 ${msg.contenido}` : "📷 Foto";
-  else if (msg.tipo === "video") base = msg.contenido ? `🎥 ${msg.contenido}` : "🎥 Video";
-  else if (msg.tipo === "audio") base = "🎤 Nota de voz";
-  else if (msg.tipo === "sticker") base = "Sticker";
-  else if (msg.tipo === "archivo") base = `📄 ${msg.archivo_nombre || msg.contenido || "Documento"}`;
-  else if (msg.tipo === "ubicacion") base = `📍 ${json<{ nombre?: string }>()?.nombre || "Ubicación"}`;
-  else if (msg.tipo === "contacto") base = `👤 ${json<{ nombre: string }[]>()?.[0]?.nombre || "Contacto"}`;
-  else if (msg.tipo === "encuesta") base = `📊 ${json<{ pregunta: string }>()?.pregunta || "Encuesta"}`;
-  else base = msg.contenido || "Mensaje";
-  // En grupos, como en WhatsApp: "Jair: Sticker".
-  return msg.autor_nombre && msg.direccion === "entrante" ? `${msg.autor_nombre}: ${base}` : base;
-}
 
 export default function WhatsAppPage() {
   return (
@@ -78,6 +62,11 @@ function WhatsAppPageInner() {
   // Estado del canal en vivo (socket.io). Mientras está caído se muestra "Reconectando…" y, al
   // volver, se resincroniza todo lo que pudo pasar en el hueco (ver onConnect más abajo).
   const [enVivo, setEnVivo] = useState(true);
+  // "Escribiendo…" / "en línea" del contacto del chat abierto (llega en vivo, caduca sola).
+  const [presencia, setPresencia] = useState<{ conversacionId: string; estado: string } | null>(null);
+  const presenciaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [verArchivados, setVerArchivados] = useState(false);
+  const [eliminarTarget, setEliminarTarget] = useState<WhatsAppMensaje | null>(null);
   const [conversaciones, setConversaciones] = useState<ConversacionItem[] | null>(null);
   const [loadingConv, setLoadingConv] = useState(false);
   const [activeConversacion, setActiveConversacion] = useState<WhatsAppConversacionDetalle | null>(null);
@@ -143,6 +132,7 @@ function WhatsAppPageInner() {
       if (tagFiltro) params.set("tag", tagFiltro);
       if (soloAsignadasAMi) params.set("asignado", "me");
       if (busquedaDebounced.trim()) params.set("q", busquedaDebounced.trim());
+      if (verArchivados) params.set("archivado", "1");
       const r = await fetch(`/api/whatsapp/conexiones/${activeConexionId}/conversaciones?${params.toString()}`);
       if (!r.ok) return;
       const d = await r.json();
@@ -247,7 +237,7 @@ function WhatsAppPageInner() {
     loadConversaciones();
     if (saltarProximoResetRef.current) saltarProximoResetRef.current = false;
     else { setActiveConversacion(null); setMensajes(null); }
-  }, [activeConexionId, etapaFiltro, tagFiltro, soloAsignadasAMi, busquedaDebounced]);
+  }, [activeConexionId, etapaFiltro, tagFiltro, soloAsignadasAMi, busquedaDebounced, verArchivados]);
 
   // "Contactar por WhatsApp" desde /contactos/[id] llega aquí como `?conversacion=<id>` — abrirla
   // directo, sin depender del filtro de etapa actual, y limpiar la URL para que un refresco no la
@@ -323,6 +313,7 @@ function WhatsAppPageInner() {
         if (!parchada) loadConversacionesRef.current({ silent: true });
       }
       if (ev.conversacion_id === activeConversacionIdRef.current) {
+        if (ev.mensaje.direccion === "entrante") setPresencia((p) => (p ? { ...p, estado: "available" } : p));
         setMensajes((cur) => mergeMensajes(cur || [], [ev.mensaje]));
         marcarVistos(ev.conversacion_id);
       }
@@ -367,6 +358,15 @@ function WhatsAppPageInner() {
         }).catch(() => {});
       }
     };
+    const onPresencia = (ev: any) => {
+      if (ev.conversacion_id !== activeConversacionIdRef.current) return;
+      setPresencia({ conversacionId: ev.conversacion_id, estado: ev.estado });
+      if (presenciaTimerRef.current) clearTimeout(presenciaTimerRef.current);
+      // WhatsApp no siempre avisa cuando el contacto deja de escribir: se apaga sola a los 10 s.
+      if (ev.estado === "composing" || ev.estado === "recording") {
+        presenciaTimerRef.current = setTimeout(() => setPresencia((p) => (p && p.conversacionId === ev.conversacion_id ? { ...p, estado: "available" } : p)), 10_000);
+      }
+    };
     const onMediaError = (ev: any) => {
       if (ev.conversacion_id !== activeConversacionIdRef.current) return;
       toast.error("No se pudo descargar el archivo", { description: "Puede que ya no esté en el teléfono. Pídele al contacto que lo reenvíe." });
@@ -404,6 +404,7 @@ function WhatsAppPageInner() {
     socket.on("whatsapp:mensaje-actualizado", onMensajeActualizado);
     socket.on("whatsapp:historial", onHistorial);
     socket.on("whatsapp:media-error", onMediaError);
+    socket.on("whatsapp:presencia", onPresencia);
     return () => {
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
@@ -415,6 +416,7 @@ function WhatsAppPageInner() {
       socket.off("whatsapp:mensaje-actualizado", onMensajeActualizado);
       socket.off("whatsapp:historial", onHistorial);
       socket.off("whatsapp:media-error", onMediaError);
+      socket.off("whatsapp:presencia", onPresencia);
     };
   }, []);
 
@@ -433,6 +435,75 @@ function WhatsAppPageInner() {
     loadMensajes(conversacionId);
   };
 
+  // ---- Acciones sobre mensajes (como en WhatsApp) ----
+  const reemplazarMensaje = (m: WhatsAppMensaje) => setMensajes((cur) => cur ? cur.map((x) => (x.id === m.id ? m : x)) : cur);
+
+  const reaccionar = async (m: WhatsAppMensaje, emoji: string) => {
+    const antes = m;
+    const reacciones = { ...(m.reacciones || {}) };
+    if (emoji) reacciones.yo = emoji; else delete reacciones.yo;
+    reemplazarMensaje({ ...m, reacciones }); // al instante, como WhatsApp
+    const r = await fetch(`/api/whatsapp/mensajes/${m.id}/reaccion`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ emoji }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { reemplazarMensaje(antes); toast.error(d.error || "No se pudo reaccionar"); }
+  };
+
+  const eliminarMensaje = async () => {
+    const m = eliminarTarget;
+    setEliminarTarget(null);
+    if (!m) return;
+    const r = await fetch(`/api/whatsapp/mensajes/${m.id}/eliminar`, { method: "POST" });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { toast.error(d.error || "No se pudo eliminar"); return; }
+    reemplazarMensaje(d.mensaje);
+  };
+
+  const editarMensaje = async (m: WhatsAppMensaje, contenido: string) => {
+    const r = await fetch(`/api/whatsapp/mensajes/${m.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contenido }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || "No se pudo editar");
+    reemplazarMensaje(d.mensaje);
+  };
+
+  const avisarEscribiendo = () => {
+    if (!activeConversacion) return;
+    fetch(`/api/whatsapp/conversaciones/${activeConversacion.id}/escribiendo`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ estado: "composing" }) }).catch(() => {});
+  };
+
+  /** Para saltar a un resultado de búsqueda viejo: trae páginas anteriores hasta encontrarlo. */
+  const asegurarMensaje = async (id: string): Promise<boolean> => {
+    if (!activeConversacion) return false;
+    const convId = activeConversacion.id;
+    let lista = mensajes || [];
+    for (let i = 0; i < 20 && !lista.some((m) => m.id === id); i++) {
+      const masViejo = lista.find((m) => !m.id.startsWith("temp-"));
+      if (!masViejo) break;
+      const r = await fetch(`/api/whatsapp/conversaciones/${convId}/mensajes?before=${encodeURIComponent(masViejo.id)}&limit=100`);
+      if (!r.ok) break;
+      const anteriores: WhatsAppMensaje[] = (await r.json()).mensajes || [];
+      if (!anteriores.length) break;
+      lista = mergeMensajes(lista, anteriores);
+    }
+    setMensajes(lista);
+    await new Promise((res) => setTimeout(res, 50));
+    return lista.some((m) => m.id === id);
+  };
+
+  // ---- Fijar y archivar conversaciones ----
+  const fijarConversacion = async (c: ConversacionItem, fijada: boolean) => {
+    const r = await fetch(`/api/whatsapp/conversaciones/${c.id}/fijar`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fijada }) });
+    if (!r.ok) { toast.error("No se pudo fijar la conversación"); return; }
+    toast.success(fijada ? "Conversación fijada arriba" : "Conversación desfijada");
+    loadConversaciones({ silent: true });
+  };
+  const archivarConversacion = async (c: ConversacionItem, archivado: boolean) => {
+    const r = await fetch(`/api/whatsapp/conversaciones/${c.id}/archivar`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ archivado }) });
+    if (!r.ok) { toast.error("No se pudo archivar la conversación"); return; }
+    toast.success(archivado ? "Conversación archivada" : "Conversación de vuelta en la bandeja");
+    if (activeConversacion?.id === c.id) { setActiveConversacion(null); setMensajes(null); }
+    loadConversaciones({ silent: true });
+  };
+
   // Media del historial (o que no se pudo bajar en vivo): el worker la descarga y la reemplaza en
   // pantalla vía `whatsapp:mensaje-actualizado`.
   const descargarMedia = async (m: WhatsAppMensaje) => {
@@ -442,7 +513,7 @@ function WhatsAppPageInner() {
     if (d.mensaje) setMensajes((cur) => cur ? cur.map((x) => (x.id === d.mensaje.id ? d.mensaje : x)) : cur);
   };
 
-  const enviarMensaje = async (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number }) => {
+  const enviarMensaje = async (d: { tipo: string; contenido?: string; archivoUrl?: string; archivoNombre?: string; archivoTamanio?: number; respuestaA?: string }) => {
     if (!activeConversacion) return;
     // Envío optimista: la burbuja aparece de inmediato con estado "pendiente" (como WhatsApp Web)
     // en vez de esperar la respuesta del servidor, y se reconcilia (o se marca "fallido") después.
@@ -463,6 +534,8 @@ function WhatsAppPageInner() {
       created_at: new Date().toISOString(),
       visto_at: null,
       visto_por: null,
+      respuesta_a: d.respuestaA ?? null,
+      respuesta_preview: d.respuestaA ? (() => { const q = mensajes?.find((x) => x.wa_message_id === d.respuestaA); return q ? previewDe(q) : null; })() : null,
     };
     setMensajes((cur) => cur ? [...cur, optimista] : [optimista]);
     try {
@@ -650,6 +723,10 @@ function WhatsAppPageInner() {
                 onBusquedaChange={setBusqueda}
                 onSelect={seleccionarConversacion}
                 loading={loadingConv}
+                verArchivados={verArchivados}
+                onToggleArchivados={() => setVerArchivados((v) => !v)}
+                onFijar={fijarConversacion}
+                onArchivar={archivarConversacion}
               />
             </div>
 
@@ -677,6 +754,12 @@ function WhatsAppPageInner() {
                   onCrearTag={crearTag}
                   onAbrirPerfil={() => setPerfilOpen(true)}
                   onDescargar={descargarMedia}
+                  onReaccionar={reaccionar}
+                  onEliminar={(m) => setEliminarTarget(m)}
+                  onEditar={editarMensaje}
+                  onEscribiendo={avisarEscribiendo}
+                  presencia={presencia?.conversacionId === activeConversacion.id ? presencia.estado : null}
+                  onAsegurarMensaje={asegurarMensaje}
                 />
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6 chat-bg">
@@ -742,6 +825,16 @@ function WhatsAppPageInner() {
           confirmLabel="Desconectar"
           onConfirm={desconectar}
           onCancel={() => setDesconectarTarget(null)}
+        />
+      )}
+      {eliminarTarget && (
+        <ConfirmDialog
+          danger
+          title="Eliminar para todos"
+          message="El mensaje se borrará también del teléfono del contacto. En el CRM queda marcado como eliminado para el equipo."
+          confirmLabel="Eliminar para todos"
+          onConfirm={eliminarMensaje}
+          onCancel={() => setEliminarTarget(null)}
         />
       )}
     </AppShell>

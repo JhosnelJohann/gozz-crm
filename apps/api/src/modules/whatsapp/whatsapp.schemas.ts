@@ -10,7 +10,14 @@ export const EnviarMensajeSchema = z.object({
   archivoUrl: z.string().nullable().optional(),
   archivoNombre: z.string().nullable().optional(),
   archivoTamanio: z.number().int().nonnegative().nullable().optional(),
+  /** Id de WhatsApp del mensaje al que se responde citando. */
+  respuestaA: z.string().min(1).max(128).nullable().optional(),
 });
+
+export const ReaccionSchema = z.object({ emoji: z.string().max(16) });
+export const EditarMensajeSchema = z.object({ contenido: z.string().trim().min(1).max(4096) });
+export const FijarSchema = z.object({ fijada: z.boolean() });
+export const EscribiendoSchema = z.object({ estado: z.enum(["composing", "recording", "paused"]).default("composing") });
 
 export const CrearTagSchema = z.object({
   nombre: z.string().min(1).max(40),

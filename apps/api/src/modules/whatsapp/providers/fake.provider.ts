@@ -11,6 +11,8 @@ import type {
   WhatsAppMensajeModificado,
   WhatsAppChatInfo,
   WhatsAppMediaDescargada,
+  WhatsAppAccion,
+  WhatsAppPresencia,
 } from "./whatsapp-provider.interface.js";
 
 export class FakeWhatsAppProvider implements WhatsAppProvider {
@@ -20,6 +22,17 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
   private modCbs: ((conexionId: string, mod: WhatsAppMensajeModificado) => void)[] = [];
   private chatCbs: ((conexionId: string, chats: WhatsAppChatInfo[], opts: { historial: boolean }) => void | Promise<void>)[] = [];
   public descargas: string[] = [];
+  public acciones: { conexionId: string; accion: WhatsAppAccion }[] = [];
+  private presCbs: ((conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null) => void)[] = [];
+  async accion(conexionId: string, accion: WhatsAppAccion): Promise<void> {
+    this.acciones.push({ conexionId, accion });
+  }
+  onPresencia(cb: (conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null) => void): void {
+    this.presCbs.push(cb);
+  }
+  simulatePresencia(conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null = null): void {
+    this.presCbs.forEach((cb) => cb(conexionId, jid, estado, participante));
+  }
   private statusCbs: ((conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void)[] = [];
   private contactoCbs: ((conexionId: string, jid: string, info: { jidReal?: string | null; nombre?: string | null }) => void)[] = [];
   public sent: { conexionId: string; msg: WhatsAppOutgoingMessage }[] = [];

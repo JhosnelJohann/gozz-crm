@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Eye, AlertCircle, MapPin, User, BarChart3, Download, Ban, Pencil, Loader2 } from "@/lib/bootstrap-icons";
+import { Eye, AlertCircle, MapPin, User, BarChart3, Download, Ban, Pencil, Loader2, Reply, SmilePlus, MoreVertical, Copy, Trash2 } from "@/lib/bootstrap-icons";
 import { FileMessage } from "@/components/chat/FileMessage";
 import { AudioMessage } from "@/components/chat/AudioMessage";
 import type { WhatsAppMensaje } from "./types";
@@ -157,6 +157,76 @@ function Cuerpo({ m, isMe, onDescargar }: { m: WhatsAppMensaje; isMe: boolean; o
   }
 }
 
+const REACCIONES_RAPIDAS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+const MIN = 60_000;
+
+/** Barra de acciones al pasar el mouse (o tocar en móvil), como en WhatsApp Web: reacción rápida,
+ * responder y un menú con copiar / editar / eliminar para todos. */
+function Acciones({ m, isMe, onResponder, onReaccionar, onEditar, onEliminar }: {
+  m: WhatsAppMensaje; isMe: boolean;
+  onResponder?: (m: WhatsAppMensaje) => void;
+  onReaccionar?: (m: WhatsAppMensaje, emoji: string) => void;
+  onEditar?: (m: WhatsAppMensaje) => void;
+  onEliminar?: (m: WhatsAppMensaje) => void;
+}) {
+  const [panel, setPanel] = useState<null | "reaccion" | "menu">(null);
+  const edad = Date.now() - new Date(m.created_at).getTime();
+  const puedeEditar = isMe && m.tipo === "texto" && !m.eliminado_at && edad < 15 * MIN;
+  const puedeEliminar = isMe && !m.eliminado_at && edad < 48 * 60 * MIN;
+  const mia = m.reacciones?.yo;
+  const btn = "h-7 w-7 rounded-full flex items-center justify-center text-neutral-500 hover:text-brand-primary hover:bg-black/5 dark:hover:bg-white/10 transition";
+  return (
+    <div
+      className={cn(
+        "absolute top-1 z-20 flex items-center gap-0.5 rounded-full px-1 py-0.5 bg-white/95 dark:bg-[#1a1d29]/95 shadow-md border border-black/5 dark:border-white/10 transition-opacity",
+        panel ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100",
+        isMe ? "right-full mr-1.5" : "left-full ml-1.5"
+      )}
+      onMouseLeave={() => setPanel(null)}
+    >
+      <button type="button" className={btn} title="Reaccionar" aria-label="Reaccionar" onClick={() => setPanel(panel === "reaccion" ? null : "reaccion")}><SmilePlus className="h-4 w-4" /></button>
+      <button type="button" className={btn} title="Responder" aria-label="Responder" onClick={() => onResponder?.(m)}><Reply className="h-4 w-4" /></button>
+      <button type="button" className={btn} title="Más opciones" aria-label="Más opciones" onClick={() => setPanel(panel === "menu" ? null : "menu")}><MoreVertical className="h-4 w-4" /></button>
+      {panel === "reaccion" && (
+        <div className={cn("absolute -top-11 flex gap-0.5 rounded-full px-1.5 py-1 bg-white dark:bg-[#1a1d29] shadow-lg border border-black/5 dark:border-white/10 wa-menu-in", isMe ? "right-0" : "left-0")}>
+          {REACCIONES_RAPIDAS.map((e) => (
+            <button
+              key={e}
+              type="button"
+              onClick={() => { onReaccionar?.(m, mia === e ? "" : e); setPanel(null); }}
+              className={cn("h-8 w-8 rounded-full text-lg leading-none hover:scale-125 transition-transform", mia === e && "bg-brand-primary/15")}
+              aria-label={`Reaccionar con ${e}`}
+            >{e}</button>
+          ))}
+        </div>
+      )}
+      {panel === "menu" && (
+        <div className={cn("absolute top-9 w-48 rounded-xl glass-panel py-1 wa-menu-in", isMe ? "right-0" : "left-0")}>
+          {m.contenido && m.tipo === "texto" && (
+            <button type="button" className="w-full text-left px-3 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-2"
+              onClick={() => { navigator.clipboard?.writeText(m.contenido || "").catch(() => {}); setPanel(null); }}>
+              <Copy className="h-3.5 w-3.5" /> Copiar texto
+            </button>
+          )}
+          <button type="button" className="w-full text-left px-3 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-2" onClick={() => { onResponder?.(m); setPanel(null); }}>
+            <Reply className="h-3.5 w-3.5" /> Responder
+          </button>
+          {puedeEditar && (
+            <button type="button" className="w-full text-left px-3 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-2" onClick={() => { onEditar?.(m); setPanel(null); }}>
+              <Pencil className="h-3.5 w-3.5" /> Editar
+            </button>
+          )}
+          {puedeEliminar && (
+            <button type="button" className="w-full text-left px-3 py-2 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/10 flex items-center gap-2" onClick={() => { onEliminar?.(m); setPanel(null); }}>
+              <Trash2 className="h-3.5 w-3.5" /> Eliminar para todos
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   m: WhatsAppMensaje;
   esGrupo?: boolean;
@@ -164,9 +234,13 @@ interface Props {
   onRetry?: (m: WhatsAppMensaje) => void;
   onDescargar?: (m: WhatsAppMensaje) => Promise<void>;
   onIrACita?: (waMessageId: string) => void;
+  onResponder?: (m: WhatsAppMensaje) => void;
+  onReaccionar?: (m: WhatsAppMensaje, emoji: string) => void;
+  onEditar?: (m: WhatsAppMensaje) => void;
+  onEliminar?: (m: WhatsAppMensaje) => void;
 }
 
-export function MessageBubble({ m, esGrupo, animar, onRetry, onDescargar, onIrACita }: Props) {
+export function MessageBubble({ m, esGrupo, animar, onRetry, onDescargar, onIrACita, onResponder, onReaccionar, onEditar, onEliminar }: Props) {
   const isMe = m.direccion === "saliente";
   const fallido = m.estado_entrega === "fallido";
   const eliminado = !!m.eliminado_at;
@@ -179,7 +253,7 @@ export function MessageBubble({ m, esGrupo, animar, onRetry, onDescargar, onIrAC
     <div className={cn("flex", isMe ? "justify-end" : "justify-start", animar && (isMe ? "wa-fly" : "wa-bubble-in"), reacciones.length > 0 && "mb-3")} data-wa-id={m.wa_message_id || undefined}>
       <div
         className={cn(
-          "relative max-w-[78%] sm:max-w-[65%] rounded-2xl px-3.5 py-2",
+          "group relative max-w-[78%] sm:max-w-[65%] rounded-2xl px-3.5 py-2",
           sticker
             ? "bg-transparent px-0 py-0"
             : isMe
@@ -190,6 +264,9 @@ export function MessageBubble({ m, esGrupo, animar, onRetry, onDescargar, onIrAC
           eliminado && "opacity-75"
         )}
       >
+        {!!m.wa_message_id && !m.id.startsWith("temp-") && !fallido && (
+          <Acciones m={m} isMe={isMe} onResponder={onResponder} onReaccionar={onReaccionar} onEditar={onEditar} onEliminar={onEliminar} />
+        )}
         {esGrupo && !isMe && m.autor_nombre && (
           <div className="text-[12px] font-semibold mb-0.5 truncate" style={{ color: colorAutor(autorClave) }}>{m.autor_nombre}</div>
         )}
