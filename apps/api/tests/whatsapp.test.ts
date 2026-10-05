@@ -390,7 +390,7 @@ describe("WhatsApp — convertir a Oportunidad", () => {
   it("convierte una conversación vinculada reutilizando oportunidadesService.crear()", async () => {
     const userId = await usuarioDePruebas();
     const conexion = await service.crearConexion(`Conexión ${sufijo()}`, userId);
-    const digitos = sufijo().replace(/\D/g, "").padEnd(10, "3").slice(0, 10);
+    const digitos = `3052${siete().slice(0, 6)}`; // número de EE.UU. válido (la vinculación es por E.164 exacto)
     const contactoId = await crearContactoConTelefono(`+1${digitos}`);
     const jid = `1${digitos}@s.whatsapp.net`;
     await service.registrarMensajeEntrante(conexion.id, {
