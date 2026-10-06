@@ -173,7 +173,7 @@ function Visor({ grupo, inicio, onCerrar, onSiguienteGrupo, onAnteriorGrupo, onV
 
   if (!e) return null;
   return (
-    <div className="relative h-full w-full flex items-center justify-center bg-black/90 select-none wa-thread-in"
+    <div className="relative h-full w-full flex items-center justify-center bg-black/90 select-none wa-thread-in py-4 px-2"
       onPointerDown={() => setPausa(true)} onPointerUp={() => setPausa(false)} onPointerLeave={() => setPausa(false)}>
       <div className="relative h-full max-h-[760px] w-full max-w-[430px] flex flex-col">
         <div className="absolute inset-x-0 top-0 z-10 p-3 bg-gradient-to-b from-black/60 to-transparent">
