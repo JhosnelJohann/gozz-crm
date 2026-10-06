@@ -19,7 +19,10 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
     globalSetup: ["tests/setup/global-setup.ts"],
-    env: { DATABASE_URL: urlBasePruebas() },
+    // `N8N_WEBHOOK_SECRET` fijo por la misma razón que `DATABASE_URL`: automatizaciones.service.ts
+    // lo lee como constante de módulo al importarse, así que fijarlo dentro de un test (después de
+    // que el import ya corrió) no tiene efecto — tiene que estar ANTES de que nada se importe.
+    env: { DATABASE_URL: urlBasePruebas(), N8N_WEBHOOK_SECRET: "secreto-de-pruebas" },
     // Lista TODOS los casos con su resultado, no solo los que fallan: el reporte de una entrega es
     // la salida literal, y "2 passed" no dice qué se probó.
     reporters: ["verbose"],

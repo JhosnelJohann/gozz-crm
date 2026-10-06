@@ -32,6 +32,9 @@ import { registerOportunidadesEtapaRoutes } from "./oportunidades-etapa-routes.j
 import { registerOportunidadesExportacionRoutes } from "./oportunidades-exportacion-routes.js";
 import { registerWhatsAppRoutes } from "./modules/whatsapp/whatsapp.routes.js";
 import { listUsuariosConAcceso as listUsuariosConAccesoWhatsApp } from "./modules/whatsapp/whatsapp.repository.js";
+import { registerAutomatizacionesRoutes } from "./modules/automatizaciones/automatizaciones.routes.js";
+import { startRecordatoriosCron } from "./modules/automatizaciones/automatizaciones.cron.js";
+import { evaluarReglasParaMensaje, emitirEventoN8n } from "./modules/automatizaciones/automatizaciones.service.js";
 
 process.on("uncaughtException", (err) => {
   console.error("[uncaughtException]", err instanceof Error ? err.stack || err.message : err);
@@ -117,6 +120,7 @@ registerRecognitionsRoutes(app);
 registerOportunidadesEtapaRoutes(app);
 registerOportunidadesExportacionRoutes(app);
 registerWhatsAppRoutes(app, upload);
+registerAutomatizacionesRoutes(app);
 
 registerErrorHandler(app);
 
@@ -194,6 +198,19 @@ async function startWhatsAppNotifyListener() {
       } catch (e: any) {
         console.error("[whatsapp-notify] resolve users error:", e?.message || e);
       }
+      // Automatizaciones (Fase 2): el worker de WhatsApp corre en OTRO proceso y no ve las reglas
+      // directamente — se engancha aquí, en el mismo puente NOTIFY que ya reenvía a Socket.IO, en
+      // vez de crear un segundo canal. `evaluarReglasParaMensaje` nunca lanza, así que un fallo ahí
+      // no puede tumbar el reenvío a Socket.IO de arriba.
+      if (payload.tipo === "mensaje" && payload.conversacion_id && payload.mensaje) {
+        evaluarReglasParaMensaje(payload.conversacion_id, payload.mensaje).catch(() => {});
+        if (payload.mensaje.direccion === "entrante") {
+          emitirEventoN8n("mensaje.recibido", payload.conversacion_id, { mensaje: payload.mensaje }).catch(() => {});
+        }
+      }
+      if (payload.tipo === "mensaje_estado" && payload.conversacion_id) {
+        emitirEventoN8n("mensaje.estado", payload.conversacion_id, { mensaje_id: payload.mensaje_id, estado: payload.estado }).catch(() => {});
+      }
     });
     await client.query("LISTEN whatsapp_evento");
     console.log("[whatsapp-notify] LISTEN whatsapp_evento activo");
@@ -211,4 +228,5 @@ httpServer.listen(PORT, "0.0.0.0", () => {
   startWhatsAppNotifyListener().catch(() => {}); // puente NOTIFY→socket para WhatsApp en tiempo real
   startBreakMonitor();
   startRecognitionsCron();
+  startRecordatoriosCron();
 });
