@@ -14,6 +14,13 @@ export const EnviarMensajeSchema = z.object({
   respuestaA: z.string().min(1).max(128).nullable().optional(),
 });
 
+export const PublicarEstadoSchema = z.object({
+  tipo: z.enum(["texto", "imagen", "video"]),
+  contenido: z.string().max(700).nullable().optional(),
+  archivoUrl: z.string().regex(/^\/uploads\//).nullable().optional(),
+  fondo: z.string().regex(/^#[0-9A-Fa-f]{6}$/).nullable().optional(),
+});
+
 export const ReaccionSchema = z.object({ emoji: z.string().max(16) });
 export const EditarMensajeSchema = z.object({ contenido: z.string().trim().min(1).max(4096) });
 export const FijarSchema = z.object({ fijada: z.boolean() });

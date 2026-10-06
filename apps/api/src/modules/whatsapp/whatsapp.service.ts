@@ -5,7 +5,7 @@
 import { query } from "../../shared/db.js";
 import * as repo from "./whatsapp.repository.js";
 import * as oportunidadesService from "../oportunidades/oportunidades.service.js";
-import type { WhatsAppConnectionUpdate, WhatsAppIncomingMessage, WhatsAppMensajeModificado, WhatsAppChatInfo, WhatsAppMediaDescargada } from "./providers/whatsapp-provider.interface.js";
+import type { WhatsAppConnectionUpdate, WhatsAppIncomingMessage, WhatsAppMensajeModificado, WhatsAppChatInfo, WhatsAppMediaDescargada, WhatsAppEstadoEntrante } from "./providers/whatsapp-provider.interface.js";
 import { previewDe } from "./mensaje-parser.js";
 
 /** Una foto se refresca si no hay, si es una URL vieja del CDN de WhatsApp (caduca), o si se
@@ -433,6 +433,35 @@ export async function registrarPresencia(conexionId: string, jid: string, estado
   const conv = await repo.getConversacionPorJid(conexionId, jid);
   if (!conv) return;
   await notifyEvento({ tipo: "presencia", conexion_id: conexionId, conversacion_id: conv.id, estado, participante });
+}
+
+// ---- Estados (historias de 24 h) ----
+
+export async function registrarEstado(conexionId: string, e: WhatsAppEstadoEntrante): Promise<void> {
+  const fila = await repo.insertEstado(conexionId, e);
+  if (fila) await notifyEvento({ tipo: "estado_whatsapp", conexion_id: conexionId, estado_id: fila.id, propio: fila.propio });
+}
+
+export async function listarEstados(conexionId: string) {
+  return repo.listEstados(conexionId);
+}
+
+/** Publicar un estado desde el CRM: lo manda el worker (pg_notify) y vuelve como estado propio. */
+export async function publicarEstado(conexionId: string, d: { tipo: "texto" | "imagen" | "video"; contenido?: string | null; archivoUrl?: string | null; fondo?: string | null }) {
+  if (d.tipo === "texto" && !d.contenido?.trim()) throw new Error("Escribe el texto del estado");
+  if (d.tipo !== "texto" && !d.archivoUrl) throw new Error("Falta la foto o el video del estado");
+  await query("SELECT pg_notify('whatsapp_publicar_estado', $1)", [JSON.stringify({ conexion_id: conexionId, ...d })]);
+}
+
+/** Ver un estado de un contacto: se marca visto y el contacto recibe el "visto", como en WhatsApp. */
+export async function verEstado(estadoId: string) {
+  const e = await repo.getEstado(estadoId);
+  if (!e) throw new Error("Estado no encontrado");
+  const nuevo = await repo.marcarEstadoVisto(estadoId);
+  if (nuevo && !e.propio && e.autor_jid) {
+    await query("SELECT pg_notify('whatsapp_ver_estado', $1)", [JSON.stringify({ conexion_id: e.conexion_id, wa_message_id: e.wa_message_id, autor_jid: e.autor_jid })]);
+  }
+  return e;
 }
 
 export async function fijar(conversacionId: string, fijada: boolean) {

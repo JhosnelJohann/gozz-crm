@@ -20,7 +20,7 @@ import type { WhatsAppMensajeEstado } from "@gozz/shared-types";
 import { UPLOADS_ROOT, shard, readUploadedFileBytes, putUploadedBytesToR2 } from "../../../lib/storage.js";
 import { usePostgresAuthState, clearAuthState } from "./postgres-auth-state.js";
 import { aOggOpus } from "../audio-transcode.js";
-import { parsearMensaje, type MediaInfo } from "../mensaje-parser.js";
+import { parsearMensaje, desenvolver, type MediaInfo } from "../mensaje-parser.js";
 import { createHash } from "crypto";
 import type {
   WhatsAppProvider,
@@ -32,6 +32,8 @@ import type {
   WhatsAppMediaDescargada,
   WhatsAppAccion,
   WhatsAppPresencia,
+  WhatsAppEstadoEntrante,
+  WhatsAppNuevoEstado,
 } from "./whatsapp-provider.interface.js";
 
 /** Chats que nunca se muestran: estados (historias, Parte 4) y canales. */
@@ -82,6 +84,7 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
   private msgCbs: ((conexionId: string, msg: WhatsAppIncomingMessage) => void | Promise<void>)[] = [];
   private modCbs: ((conexionId: string, mod: WhatsAppMensajeModificado) => void)[] = [];
   private presCbs: ((conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null) => void)[] = [];
+  private estadoCbs: ((conexionId: string, e: WhatsAppEstadoEntrante) => void | Promise<void>)[] = [];
   private chatCbs: ((conexionId: string, chats: WhatsAppChatInfo[], opts: { historial: boolean }) => void | Promise<void>)[] = [];
   /** Nombre (asunto) de cada grupo, para no pedirlo a WhatsApp en cada mensaje. */
   private gruposCache = new Map<string, { nombre: string | null; at: number }>();
@@ -384,6 +387,7 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
 
   private async handleIncoming(conexionId: string, sock: WASocket, msg: WAMessage, opts: { historico: boolean }): Promise<void> {
     const jid = msg.key.remoteJid;
+    if (jid === "status@broadcast" && msg.message && msg.key.id) { await this.handleEstado(conexionId, sock, msg, opts); return; }
     if (!jid || esJidIgnorado(jid) || !msg.message) return;
     const waMessageId = msg.key.id;
     if (!waMessageId) return;
@@ -453,6 +457,63 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
       historico: opts.historico,
     };
     for (const cb of this.msgCbs) await cb(conexionId, payload);
+  }
+
+  /** Estados (historias de 24 h): texto con color de fondo, foto o video. La media se baja de
+   * entrada (los estados caducan rápido en los servidores de WhatsApp). */
+  private async handleEstado(conexionId: string, sock: WASocket, msg: WAMessage, opts: { historico: boolean }): Promise<void> {
+    const p = parsearMensaje(msg.message);
+    if (p.kind !== "mensaje" || (p.tipo !== "texto" && p.tipo !== "imagen" && p.tipo !== "video")) return;
+    const fromMe = !!msg.key.fromMe;
+    const autorJid = fromMe ? null : msg.key.participant || null;
+    const argb = (desenvolver(msg.message) as any)?.extendedTextMessage?.backgroundArgb;
+    const fondo = typeof argb === "number" ? `#${((argb >>> 0) & 0xffffff).toString(16).padStart(6, "0")}` : null;
+    let archivoUrl: string | null = null;
+    let mediaMeta: string | null = null;
+    if (p.media) {
+      mediaMeta = JSON.stringify({ key: msg.key, message: msg.message, messageTimestamp: msg.messageTimestamp }, BufferJSON.replacer);
+      if (!opts.historico) {
+        try {
+          const buffer = await downloadMediaMessage(msg, "buffer", {}, { logger, reuploadRequest: sock.updateMediaMessage }) as Buffer;
+          archivoUrl = (await this.guardarMedia(conexionId, msg.key.id!, p.media, buffer)).archivoUrl;
+        } catch (e: any) {
+          console.error(`[baileys ${conexionId}] no se pudo bajar un estado:`, e?.message);
+        }
+      }
+    }
+    const e: WhatsAppEstadoEntrante = {
+      waMessageId: msg.key.id!,
+      autorJid,
+      autorNombre: autorJid ? this.dirDe(conexionId).get(autorJid)?.nombre || msg.pushName || null : null,
+      propio: fromMe,
+      tipo: p.tipo,
+      contenido: p.contenido,
+      fondo,
+      archivoUrl,
+      mediaMeta,
+      timestamp: new Date((Number(msg.messageTimestamp) || Date.now() / 1000) * 1000),
+    };
+    for (const cb of this.estadoCbs) await cb(conexionId, e);
+  }
+
+  async publicarEstado(conexionId: string, e: WhatsAppNuevoEstado): Promise<{ waMessageId: string }> {
+    const sock = this.sockets.get(conexionId);
+    if (!sock) throw new Error("La conexión de WhatsApp no está activa");
+    if (!e.destinatarios.length) throw new Error("No hay contactos a quienes mostrar el estado");
+    let content: any;
+    if (e.tipo === "texto") content = { text: e.contenido || "" };
+    else {
+      if (!e.archivoUrl) throw new Error("Falta el archivo del estado");
+      const buffer = await readUploadedFileBytes(e.archivoUrl);
+      content = e.tipo === "imagen" ? { image: buffer, caption: e.contenido || undefined } : { video: buffer, caption: e.contenido || undefined };
+    }
+    const sent = await sock.sendMessage("status@broadcast", content, {
+      statusJidList: e.destinatarios,
+      backgroundColor: e.tipo === "texto" ? e.fondo || "#5750E8" : undefined,
+      font: e.tipo === "texto" ? 1 : undefined,
+    } as any);
+    if (!sent?.key?.id) throw new Error("WhatsApp no confirmó el estado");
+    return { waMessageId: sent.key.id };
   }
 
   /** Baja la media de un mensaje guardado sin archivo (historial, o descarga fallida). Si el
@@ -536,10 +597,13 @@ export class BaileysWhatsAppProvider implements WhatsAppProvider {
       case "editar": await sock.sendMessage(a.jid, { text: a.contenido, edit: key(a.clave) } as any); break;
       case "presencia": await sock.sendPresenceUpdate(a.estado, a.jid); break;
       case "suscribir_presencia": await sock.presenceSubscribe(a.jid); break;
+      // "Visto" de un estado: el contacto ve que lo viste, como en WhatsApp.
+      case "ver_estado": await sock.readMessages([{ remoteJid: "status@broadcast", id: a.clave.id, participant: a.clave.participant || undefined, fromMe: false }]); break;
     }
   }
 
   onPresencia(cb: (conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null) => void): void { this.presCbs.push(cb); }
+  onEstado(cb: (conexionId: string, e: WhatsAppEstadoEntrante) => void | Promise<void>): void { this.estadoCbs.push(cb); }
   onQr(cb: (conexionId: string, qr: string) => void): void { this.qrCbs.push(cb); }
   onConnectionUpdate(cb: (conexionId: string, update: WhatsAppConnectionUpdate) => void): void { this.stateCbs.push(cb); }
   onMessage(cb: (conexionId: string, msg: WhatsAppIncomingMessage) => void | Promise<void>): void { this.msgCbs.push(cb); }

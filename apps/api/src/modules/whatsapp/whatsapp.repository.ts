@@ -387,6 +387,59 @@ export async function setAsignado(conversacionId: string, userId: string | null)
   return rows[0];
 }
 
+// ---- Estados (historias de 24 h) ----
+
+export interface EstadoFila {
+  id: string; conexion_id: string; wa_message_id: string; autor_jid: string | null; autor_nombre: string | null;
+  propio: boolean; tipo: "texto" | "imagen" | "video"; contenido: string | null; fondo: string | null;
+  archivo_url: string | null; visto_at: string | null; created_at: string; expira_at: string;
+}
+const ESTADO_COLS = "id, conexion_id, wa_message_id, autor_jid, autor_nombre, propio, tipo, contenido, fondo, archivo_url, visto_at, created_at, expira_at";
+
+export async function insertEstado(conexionId: string, e: {
+  waMessageId: string; autorJid: string | null; autorNombre: string | null; propio: boolean; tipo: string;
+  contenido: string | null; fondo: string | null; archivoUrl: string | null; mediaMeta: string | null; timestamp: Date;
+}): Promise<EstadoFila | null> {
+  const rows = await query<EstadoFila>(
+    `INSERT INTO gozz.whatsapp_estados (conexion_id, wa_message_id, autor_jid, autor_nombre, propio, tipo, contenido, fondo, archivo_url, media_meta, created_at, expira_at, visto_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $11::timestamptz + interval '24 hours', CASE WHEN $5 THEN NOW() END)
+     ON CONFLICT (conexion_id, wa_message_id) DO UPDATE SET archivo_url = COALESCE(gozz.whatsapp_estados.archivo_url, EXCLUDED.archivo_url)
+     RETURNING ${ESTADO_COLS}`,
+    [conexionId, e.waMessageId, e.autorJid, e.autorNombre, e.propio, e.tipo, e.contenido, e.fondo, e.archivoUrl, e.mediaMeta, e.timestamp]
+  );
+  return rows[0] ?? null;
+}
+
+/** Estados vigentes (últimas 24 h), más nuevos primero. Aprovecha para borrar los vencidos hace
+ * más de 7 días (ya no se muestran y solo ocupan espacio). */
+export async function listEstados(conexionId: string): Promise<EstadoFila[]> {
+  await query("DELETE FROM gozz.whatsapp_estados WHERE conexion_id = $1 AND expira_at < NOW() - interval '7 days'", [conexionId]);
+  return query<EstadoFila>(
+    `SELECT ${ESTADO_COLS} FROM gozz.whatsapp_estados WHERE conexion_id = $1 AND expira_at > NOW() ORDER BY created_at DESC`,
+    [conexionId]
+  );
+}
+
+export async function getEstado(id: string): Promise<EstadoFila | null> {
+  const rows = await query<EstadoFila>(`SELECT ${ESTADO_COLS} FROM gozz.whatsapp_estados WHERE id = $1`, [id]);
+  return rows[0] ?? null;
+}
+
+export async function marcarEstadoVisto(id: string): Promise<boolean> {
+  const rows = await query<{ id: string }>("UPDATE gozz.whatsapp_estados SET visto_at = NOW() WHERE id = $1 AND visto_at IS NULL RETURNING id", [id]);
+  return rows.length > 0;
+}
+
+/** A quién se le muestra un estado propio: los chats individuales de la conexión con número. */
+export async function destinatariosEstados(conexionId: string): Promise<string[]> {
+  const rows = await query<{ jid: string }>(
+    `SELECT COALESCE(telefono_real, wa_jid) AS jid FROM gozz.whatsapp_conversaciones
+      WHERE conexion_id = $1 AND es_grupo = false AND wa_jid NOT LIKE '%@g.us'`,
+    [conexionId]
+  );
+  return [...new Set(rows.map((r) => r.jid).filter((j) => j.endsWith("@s.whatsapp.net") || j.endsWith("@lid")))];
+}
+
 export async function setFijada(conversacionId: string, fijada: boolean): Promise<void> {
   await query("UPDATE gozz.whatsapp_conversaciones SET fijada = $2, updated_at = NOW() WHERE id = $1", [conversacionId, fijada]);
 }

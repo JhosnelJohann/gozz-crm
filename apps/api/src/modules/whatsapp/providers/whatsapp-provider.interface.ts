@@ -25,7 +25,31 @@ export type WhatsAppAccion =
   | { tipo: "eliminar"; jid: string; clave: WhatsAppClaveMensaje }
   | { tipo: "editar"; jid: string; clave: WhatsAppClaveMensaje; contenido: string }
   | { tipo: "presencia"; jid: string; estado: "composing" | "recording" | "paused" }
-  | { tipo: "suscribir_presencia"; jid: string };
+  | { tipo: "suscribir_presencia"; jid: string }
+  | { tipo: "ver_estado"; jid: string; clave: WhatsAppClaveMensaje };
+
+/** Un estado (historia de 24 h) publicado por un contacto, o por la propia conexión. */
+export interface WhatsAppEstadoEntrante {
+  waMessageId: string;
+  autorJid: string | null;
+  autorNombre: string | null;
+  propio: boolean;
+  tipo: "texto" | "imagen" | "video";
+  contenido: string | null;
+  fondo: string | null;
+  archivoUrl: string | null;
+  mediaMeta: string | null;
+  timestamp: Date;
+}
+
+export interface WhatsAppNuevoEstado {
+  tipo: "texto" | "imagen" | "video";
+  contenido?: string | null;
+  archivoUrl?: string | null;
+  fondo?: string | null;
+  /** A quién se le muestra (WhatsApp exige la lista): los contactos de la conexión. */
+  destinatarios: string[];
+}
 
 export type WhatsAppPresencia = "composing" | "recording" | "paused" | "available" | "unavailable";
 
@@ -113,6 +137,9 @@ export interface WhatsAppProvider {
   accion(conexionId: string, a: WhatsAppAccion): Promise<void>;
   /** "Escribiendo…", "grabando audio…", "en línea" del contacto (o de un participante en grupos). */
   onPresencia(cb: (conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null) => void): void;
+  /** Estados (historias) que publican los contactos o la propia cuenta. */
+  onEstado(cb: (conexionId: string, e: WhatsAppEstadoEntrante) => void | Promise<void>): void;
+  publicarEstado(conexionId: string, e: WhatsAppNuevoEstado): Promise<{ waMessageId: string }>;
   /** Confirmaciones de entrega/lectura de WhatsApp para un mensaje YA enviado, identificado por su
    * `waMessageId` — la única forma de que el doble-check gris y el azul de "leído" avancen. */
   onMessageStatusUpdate(cb: (conexionId: string, waMessageId: string, estado: WhatsAppMensajeEstado) => void): void;

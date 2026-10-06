@@ -18,6 +18,7 @@ import {
   EditarMensajeSchema,
   FijarSchema,
   EscribiendoSchema,
+  PublicarEstadoSchema,
 } from "./whatsapp.schemas.js";
 
 async function requireAccesoConexion(req: Request, res: Response, conexionId: string): Promise<boolean> {
@@ -128,6 +129,35 @@ export function registerWhatsAppRoutes(app: Express, upload: Multer) {
     const id = String(req.params.id);
     if (!(await requireAccesoConexion(req, res, id))) return;
     await service.desconectarConexion(id);
+    res.json({ ok: true });
+  });
+
+  // ---- Estados (historias de 24 h) ----
+  app.get("/api/whatsapp/conexiones/:id/estados", requireAuth, async (req, res) => {
+    const id = String(req.params.id);
+    if (!(await requireAccesoConexion(req, res, id))) return;
+    res.json({ estados: await service.listarEstados(id) });
+  });
+
+  app.post("/api/whatsapp/conexiones/:id/estados", requireAuth, async (req, res) => {
+    const id = String(req.params.id);
+    if (!(await requireAccesoConexion(req, res, id))) return;
+    const parsed = PublicarEstadoSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
+    try {
+      await service.publicarEstado(id, parsed.data);
+      res.status(202).json({ ok: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e?.message || "No se pudo publicar el estado" });
+    }
+  });
+
+  app.post("/api/whatsapp/estados/:id/visto", requireAuth, async (req, res) => {
+    const id = String(req.params.id);
+    const e = UUID_RE.test(id) ? await repo.getEstado(id) : null;
+    if (!e) { res.status(404).json({ error: "Estado no encontrado" }); return; }
+    if (!(await requireAccesoConexion(req, res, e.conexion_id))) return;
+    await service.verEstado(id);
     res.json({ ok: true });
   });
 

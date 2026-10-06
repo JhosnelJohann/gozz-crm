@@ -188,6 +188,7 @@ async function startWhatsAppNotifyListener() {
           : payload.tipo === "historial" ? "whatsapp:historial"
           : payload.tipo === "media_error" ? "whatsapp:media-error"
           : payload.tipo === "presencia" ? "whatsapp:presencia"
+          : payload.tipo === "estado_whatsapp" ? "whatsapp:estado-nuevo"
           : "whatsapp:mensaje-estado";
         for (const uid of userIds) emitToUser(uid, event, payload);
       } catch (e: any) {

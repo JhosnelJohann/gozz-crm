@@ -33,6 +33,9 @@ provider.onMessageStatusUpdate((_conexionId, waMessageId, estado) => {
 provider.onPresencia((conexionId, jid, estado, participante) => {
   service.registrarPresencia(conexionId, jid, estado, participante).catch(() => {});
 });
+provider.onEstado((conexionId, e) =>
+  service.registrarEstado(conexionId, e).catch((err) => console.error(`[whatsapp-cm] registrarEstado:`, err?.message))
+);
 provider.onContactoResuelto((conexionId, jid, info) => {
   service.registrarContactoResuelto(conexionId, jid, info).catch((e) => console.error(`[whatsapp-cm] registrarContactoResuelto(${jid}):`, e?.message));
 });
@@ -58,6 +61,24 @@ export async function ejecutarAccion(p: { tipo: string; conversacion_id: string;
     // La presencia es best-effort; un fallo de reacción/edición/eliminación se registra.
     if (!p.tipo.includes("presencia")) console.error(`[whatsapp-cm] acción ${p.tipo} falló:`, e?.message);
   }
+}
+
+/** Publica un estado propio a los contactos de la conexión y lo registra como propio. */
+export async function publicarEstado(p: { conexion_id: string; tipo: "texto" | "imagen" | "video"; contenido?: string | null; archivoUrl?: string | null; fondo?: string | null }): Promise<void> {
+  try {
+    const destinatarios = await repo.destinatariosEstados(p.conexion_id);
+    const { waMessageId } = await provider.publicarEstado(p.conexion_id, { tipo: p.tipo, contenido: p.contenido, archivoUrl: p.archivoUrl, fondo: p.fondo, destinatarios });
+    await service.registrarEstado(p.conexion_id, {
+      waMessageId, autorJid: null, autorNombre: null, propio: true, tipo: p.tipo, contenido: p.contenido ?? null,
+      fondo: p.fondo ?? null, archivoUrl: p.archivoUrl ?? null, mediaMeta: null, timestamp: new Date(),
+    });
+  } catch (e: any) {
+    console.error("[whatsapp-cm] no se pudo publicar el estado:", e?.message);
+  }
+}
+
+export async function verEstadoEnWhatsApp(p: { conexion_id: string; wa_message_id: string; autor_jid: string }): Promise<void> {
+  await provider.accion(p.conexion_id, { tipo: "ver_estado", jid: "status@broadcast", clave: { id: p.wa_message_id, fromMe: false, participant: p.autor_jid } }).catch(() => {});
 }
 
 /** Baja la media de un mensaje guardado sin archivo (historial o descarga fallida), al pedirla. */

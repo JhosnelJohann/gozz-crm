@@ -13,6 +13,8 @@ import type {
   WhatsAppMediaDescargada,
   WhatsAppAccion,
   WhatsAppPresencia,
+  WhatsAppEstadoEntrante,
+  WhatsAppNuevoEstado,
 } from "./whatsapp-provider.interface.js";
 
 export class FakeWhatsAppProvider implements WhatsAppProvider {
@@ -29,6 +31,15 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
   }
   onPresencia(cb: (conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null) => void): void {
     this.presCbs.push(cb);
+  }
+  private estadoCbs: ((conexionId: string, e: WhatsAppEstadoEntrante) => void | Promise<void>)[] = [];
+  public estadosPublicados: WhatsAppNuevoEstado[] = [];
+  onEstado(cb: (conexionId: string, e: WhatsAppEstadoEntrante) => void | Promise<void>): void {
+    this.estadoCbs.push(cb);
+  }
+  async publicarEstado(_conexionId: string, e: WhatsAppNuevoEstado): Promise<{ waMessageId: string }> {
+    this.estadosPublicados.push(e);
+    return { waMessageId: `fake-estado-${randomUUID()}` };
   }
   simulatePresencia(conexionId: string, jid: string, estado: WhatsAppPresencia, participante: string | null = null): void {
     this.presCbs.forEach((cb) => cb(conexionId, jid, estado, participante));

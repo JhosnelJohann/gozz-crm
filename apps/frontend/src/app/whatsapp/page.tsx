@@ -9,13 +9,14 @@ import { formatearNumeroWhatsApp } from "@/lib/whatsapp-numero";
 import { setWhatsappActive } from "@/lib/whatsappActive";
 import { celebrar } from "@/lib/celebracion";
 import { previewDe } from "@/lib/whatsapp-preview";
-import { WhatsappLogo, List, LayoutGrid } from "@/lib/bootstrap-icons";
+import { WhatsappLogo, List, LayoutGrid, CircleDashed } from "@/lib/bootstrap-icons";
 import { ConnectionSwitcher } from "@/components/whatsapp/ConnectionSwitcher";
 import { ConnectWhatsAppModal } from "@/components/whatsapp/ConnectWhatsAppModal";
 import { ConversationList, type ConversacionItem } from "@/components/whatsapp/ConversationList";
 import type { UsuarioAsignable } from "@/components/whatsapp/AsignadoPicker";
 import { ConversationThread } from "@/components/whatsapp/ConversationThread";
 import { WhatsappKanban } from "@/components/whatsapp/WhatsappKanban";
+import { WhatsappEstados } from "@/components/whatsapp/WhatsappEstados";
 import { PerfilConversacionModal } from "@/components/whatsapp/PerfilConversacionModal";
 import { VincularContactoModal } from "@/components/whatsapp/VincularContactoModal";
 import { ConvertToOportunidadModal } from "@/components/whatsapp/ConvertToOportunidadModal";
@@ -58,7 +59,7 @@ function WhatsAppPageInner() {
   const [busqueda, setBusqueda] = useState("");
   const [busquedaDebounced, setBusquedaDebounced] = useState("");
   const [usuarios, setUsuarios] = useState<UsuarioAsignable[]>([]);
-  const [vista, setVista] = useState<"lista" | "tablero">("lista");
+  const [vista, setVista] = useState<"lista" | "tablero" | "estados">("lista");
   // Estado del canal en vivo (socket.io). Mientras está caído se muestra "Reconectando…" y, al
   // volver, se resincroniza todo lo que pudo pasar en el hueco (ver onConnect más abajo).
   const [enVivo, setEnVivo] = useState(true);
@@ -668,7 +669,28 @@ function WhatsAppPageInner() {
             </div>
           </div>
         )}
-        {vista === "tablero" ? (
+        {vista === "estados" ? (
+          <>
+            <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 glass-topbar">
+              <ConnectionSwitcher
+                conexiones={conexiones}
+                activeId={activeConexionId}
+                onSelect={setActiveConexionId}
+                onConnectNew={() => setConnectOpen(true)}
+                onDesconectar={(c) => setDesconectarTarget(c)}
+              />
+              <div className="flex-1" />
+              <button
+                onClick={() => setVista("lista")}
+                title="Volver a los chats"
+                className="h-8 px-3 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-1.5 text-[11px] font-ui font-bold uppercase tracking-wider text-brand-primary transition shrink-0"
+              >
+                <List className="h-3.5 w-3.5" /> Chats
+              </button>
+            </div>
+            <WhatsappEstados conexionId={activeConexionId} />
+          </>
+        ) : vista === "tablero" ? (
           <>
             <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 glass-topbar">
               <ConnectionSwitcher
@@ -700,6 +722,14 @@ function WhatsAppPageInner() {
                   onConnectNew={() => setConnectOpen(true)}
                   onDesconectar={(c) => setDesconectarTarget(c)}
                 />
+                <button
+                  onClick={() => setVista("estados")}
+                  title="Estados"
+                  aria-label="Estados"
+                  className="h-8 w-8 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 flex items-center justify-center text-neutral-500 shrink-0 transition"
+                >
+                  <CircleDashed className="h-4 w-4" />
+                </button>
                 <button
                   onClick={() => setVista("tablero")}
                   title="Vista de tablero"

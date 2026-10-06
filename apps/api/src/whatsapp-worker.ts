@@ -41,6 +41,8 @@ async function startListener() {
         else if (msg.channel === "whatsapp_leer") await cm.marcarLeidosEnWhatsApp(payload.conversacion_id, payload.wa_message_ids || []);
         else if (msg.channel === "whatsapp_descargar") await cm.descargarMediaMensaje(payload.mensaje_id);
         else if (msg.channel === "whatsapp_accion") await cm.ejecutarAccion(payload);
+        else if (msg.channel === "whatsapp_publicar_estado") await cm.publicarEstado(payload);
+        else if (msg.channel === "whatsapp_ver_estado") await cm.verEstadoEnWhatsApp(payload);
       } catch (e: any) {
         console.error(`[whatsapp-worker] error manejando ${msg.channel}:`, e?.message);
       }
@@ -52,6 +54,8 @@ async function startListener() {
     await client.query("LISTEN whatsapp_leer");
     await client.query("LISTEN whatsapp_descargar");
     await client.query("LISTEN whatsapp_accion");
+    await client.query("LISTEN whatsapp_publicar_estado");
+    await client.query("LISTEN whatsapp_ver_estado");
     console.log("[whatsapp-worker] LISTEN activo (whatsapp_iniciar / whatsapp_desconectar / whatsapp_enviar / whatsapp_pedir_foto / whatsapp_leer / whatsapp_descargar)");
   } catch (e: any) {
     console.error("[whatsapp-worker] no se pudo iniciar el listener, reintentando:", e?.message || e);
